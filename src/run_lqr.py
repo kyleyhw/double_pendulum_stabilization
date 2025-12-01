@@ -15,9 +15,7 @@ from src.control.lqr import LQRController
 
 def run_lqr(duration=10.0, save_gif=False, output_gif="docs/images/lqr_stabilization.gif"):
     # LQR requires starting near the equilibrium (UP)
-    # User requested starting from DOWN to see what happens.
-    # Spoiler: It will fail because LQR is a local linear controller.
-    env = DoublePendulumCartEnv(reset_mode="down", wind_std=0.0)
+    env = DoublePendulumCartEnv(reset_mode="up", wind_std=0.0)
     
     # Initialize LQR Controller
     try:
@@ -31,18 +29,13 @@ def run_lqr(duration=10.0, save_gif=False, output_gif="docs/images/lqr_stabiliza
     viz = Visualizer(env)
     
     state, _ = env.reset()
-    # Force start at DOWN for demonstration if env didn't do it
-    # (reset_mode="down" should handle it)
-    
     step = 0
     start_time = time.time()
     frames = []
     
     print("Starting LQR Stabilization...")
-    print("WARNING: Starting from DOWN position.")
-    print("LQR is a linear controller linearized around the UP position.")
-    print("It is expected to FAIL to swing up.")
-    print("Press LEFT/RIGHT to perturb the cart.")
+    print("The pendulum starts near the top (UP). LQR should hold it there.")
+    print("Press LEFT/RIGHT to perturb the cart and test robustness.")
     
     try:
         while duration <= 0 or (time.time() - start_time < duration):

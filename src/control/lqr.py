@@ -39,8 +39,8 @@ class LQRController:
         epsilon = 1e-4
         
         # Equilibrium state (Upright)
-        x_eq = np.array([0, np.pi, np.pi, 0, 0, 0])
-        u_eq = np.array([0])
+        x_eq = np.array([0.0, np.pi, np.pi, 0.0, 0.0, 0.0])
+        u_eq = np.array([0.0])
         
         # Compute A = df/dx
         for i in range(6):
@@ -146,10 +146,14 @@ class LQRController:
         # ])
         # This matches q_ddot = M_inv * b
         
+        # Add small damping to linearization to help LQR solver
+        # This moves eigenvalues off the imaginary axis
+        damping = 0.1
+        
         b = np.array([
-            F + (m1 + m2) * l1 * s1 * theta1_dot**2 + m2 * l2 * s2 * theta2_dot**2,
-            -m2 * l1 * l2 * s12 * theta2_dot**2 + (m1 + m2) * g * l1 * s1,
-            m2 * l1 * l2 * s12 * theta1_dot**2 + m2 * g * l2 * s2
+            F + (m1 + m2) * l1 * s1 * theta1_dot**2 + m2 * l2 * s2 * theta2_dot**2 - damping * x_dot,
+            -m2 * l1 * l2 * s12 * theta2_dot**2 + (m1 + m2) * g * l1 * s1 - damping * theta1_dot,
+            m2 * l1 * l2 * s12 * theta1_dot**2 + m2 * g * l2 * s2 - damping * theta2_dot
         ])
         
         q_ddot = np.linalg.solve(M_mat, b)
