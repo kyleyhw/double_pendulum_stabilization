@@ -28,9 +28,9 @@ This document outlines the planned phases and tasks for developing Double Pendul
     - [completed] Logging of metrics (reward, episode length).
 
 ## Phase 3: Visualization & Analysis
-7.  [pending] Real-time Rendering.
-    - [pending] Use `pygame` for smooth 2D animation.
-    - [pending] Visualize forces and velocities.
+7.  [completed] Real-time Rendering.
+    - [completed] Use `pygame` for smooth 2D animation.
+    - [completed] Visualize forces and velocities.
 8.  [pending] Learning Progress.
     - [pending] Save checkpoints of the agent.
     - [pending] Create a "montage" or video showing the agent's improvement over epochs.

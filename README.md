@@ -20,14 +20,60 @@ double_pendulum_stabilization/
 ├── src/                    # Source Code
 │   ├── env/                # Physics Environment
 │   │   └── double_pendulum.py
-│   ├── agent/              # RL Agent Implementation
-│   └── utils/              # Visualization and Logging
-│       └── visualizer.py
+│   ├── agent/              # RL Agent Implementation (PPO)
+│   │   └── ppo.py
+│   ├── utils/              # Visualization and Logging
+│   │   └── visualizer.py
+│   └── train.py            # Training Script
 ├── tests/                  # Unit Tests
-│   └── test_physics.py
+│   ├── test_physics.py
+│   └── test_visualizer.py
+├── venv/                   # Virtual Environment (ignored by git)
+├── requirements.txt        # Python Dependencies
 ├── PROJECT_PLAN.md         # Development Plan
 └── README.md               # This file
 ```
 
 ## Getting Started
-(Instructions to be added after implementation)
+
+### Prerequisites
+*   Python 3.8+
+*   Virtual Environment (recommended)
+
+### Installation
+1.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/kyleyhw/double_pendulum_stabilization.git
+    cd double_pendulum_stabilization
+    ```
+
+2.  **Set up Virtual Environment**:
+    ```bash
+    python -m venv venv
+    # Windows
+    venv\Scripts\activate
+    # Linux/Mac
+    source venv/bin/activate
+    ```
+
+3.  **Install Dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+### Usage
+
+**Run Physics Verification**:
+```bash
+python tests/test_physics.py
+```
+
+**Run Visualizer Test**:
+```bash
+python tests/test_visualizer.py
+```
+
+**Train the Agent**:
+```bash
+python src/train.py
+```
