@@ -19,16 +19,28 @@ We use **Proximal Policy Optimization (PPO)**, a state-of-the-art Deep Reinforce
 The system consists of a cart of mass $M$ moving on a 1D track, with two links of mass $m_1, m_2$ and length $l_1, l_2$.
 
 **Generalized Coordinates**:
-$$ q = [x, \theta_1, \theta_2]^T $$
+
+$$
+q = [x, \theta_1, \theta_2]^T
+$$
+
 where $x$ is the cart position, and $\theta_i$ are the angles from the vertical down position.
 
 **Lagrangian Mechanics**:
 The Equations of Motion (EOM) are derived from the Euler-Lagrange equation:
-$$ \frac{d}{dt} \left( \frac{\partial \mathcal{L}}{\partial \dot{q}} \right) - \frac{\partial \mathcal{L}}{\partial q} = \tau $$
+
+$$
+\frac{d}{dt} \left( \frac{\partial \mathcal{L}}{\partial \dot{q}} \right) - \frac{\partial \mathcal{L}}{\partial q} = \tau
+$$
+
 where $\mathcal{L} = T - V$.
 
 This yields the standard robotic manipulator form:
-$$ M(q)\ddot{q} + C(q, \dot{q})\dot{q} + G(q) = B u $$
+
+$$
+M(q)\ddot{q} + C(q, \dot{q})\dot{q} + G(q) = B u
+$$
+
 
 *   **Inertia Matrix** $M(q)$: Symmetric, positive-definite matrix encoding the mass distribution and coupling between links.
 *   **Coriolis & Centrifugal Matrix** $C(q, \dot{q})$: Contains terms like $\dot{\theta}_i^2$ and $\dot{\theta}_1 \dot{\theta}_2$.
@@ -39,15 +51,27 @@ For the full derivation, see [docs/physics_derivation.md](docs/physics_derivatio
 
 ### 3.2 State Space
 The RL agent observes the full state vector:
-$$ \mathbf{s} = [x, \sin\theta_1, \cos\theta_1, \sin\theta_2, \cos\theta_2, \dot{x}, \dot{\theta}_1, \dot{\theta}_2] $$
+
+$$
+\mathbf{s} = [x, \sin\theta_1, \cos\theta_1, \sin\theta_2, \cos\theta_2, \dot{x}, \dot{\theta}_1, \dot{\theta}_2]
+$$
+
 *Note: We use $\sin/\cos$ of angles to avoid discontinuity at $\pm \pi$.*
 
 ### 3.3 Reward Function
 The objective is to maximize the cumulative reward:
-$$ J(\pi) = \mathbb{E}_{\tau \sim \pi} \left[ \sum_{t=0}^T \gamma^t r(s_t, a_t) \right] $$
+
+$$
+J(\pi) = \mathbb{E}_{\tau \sim \pi} \left[ \sum_{t=0}^T \gamma^t r(s_t, a_t) \right]
+$$
+
 
 The reward function $r(s, a)$ is designed to penalize deviation from the upright equilibrium:
-$$ r = - (w_1 \|\theta_1 - \pi\|^2 + w_2 \|\theta_2 - \pi\|^2 + w_3 x^2 + w_4 \|\dot{q}\|^2) + C_{alive} $$
+
+$$
+r = - (w_1 \|\theta_1 - \pi\|^2 + w_2 \|\theta_2 - \pi\|^2 + w_3 x^2 + w_4 \|\dot{q}\|^2) + C_{alive}
+$$
+
 
 ## 4. Project Structure & Separation
 The project is strictly separated into **Simulation (Physics)** and **Agent (Brain)**:

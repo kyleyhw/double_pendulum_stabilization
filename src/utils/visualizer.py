@@ -52,15 +52,25 @@ class Visualizer:
         cart_x = ox + x * self.scale
         cart_y = oy
         
-        # Draw Coordinate System
+        # Draw Coordinate System (Cartesian)
         # Origin is at (ox, oy)
+        # Draw grid lines every 1 meter (scale pixels)
+        for i in range(-5, 6):
+            # Vertical lines
+            gx = int(ox + i * self.scale)
+            pygame.draw.line(self.screen, (240, 240, 240), (gx, 0), (gx, self.height), 1)
+            # Horizontal lines
+            gy = int(oy + i * self.scale)
+            pygame.draw.line(self.screen, (240, 240, 240), (0, gy), (self.width, gy), 1)
+
+        # Main Axes
         pygame.draw.line(self.screen, self.GRAY, (int(ox), 0), (int(ox), self.height), 1) # Y-axis
         pygame.draw.line(self.screen, self.GRAY, (0, int(oy)), (self.width, int(oy)), 1) # X-axis
         
         # Labels
-        x_label = self.font.render("x", True, self.GRAY)
-        y_label = self.font.render("y", True, self.GRAY)
-        self.screen.blit(x_label, (self.width - 20, int(oy) + 5))
+        x_label = self.font.render("x (m)", True, self.GRAY)
+        y_label = self.font.render("y (m)", True, self.GRAY)
+        self.screen.blit(x_label, (self.width - 40, int(oy) + 5))
         self.screen.blit(y_label, (int(ox) + 5, 5))
         
         # Draw Track
@@ -83,12 +93,26 @@ class Visualizer:
         pygame.draw.line(self.screen, self.BLUE, (int(cart_x), int(cart_y)), (int(p1_x), int(p1_y)), 6)
         pygame.draw.circle(self.screen, self.BLUE, (int(p1_x), int(p1_y)), 10)
         
+        # Visualize Theta1
+        # Vertical reference
+        pygame.draw.line(self.screen, self.GRAY, (int(cart_x), int(cart_y)), (int(cart_x), int(cart_y + 50)), 1)
+        # Arc? Pygame arc is annoying. Let's just draw a small line indicating the angle?
+        # Or just text.
+        t1_text = self.font.render(f"q1", True, self.BLUE)
+        self.screen.blit(t1_text, (int(cart_x + 10), int(cart_y + 20)))
+
         # Pendulum 2
         p2_x = p1_x + l2 * np.sin(theta2)
         p2_y = p1_y + l2 * np.cos(theta2)
         
         pygame.draw.line(self.screen, self.RED, (int(p1_x), int(p1_y)), (int(p2_x), int(p2_y)), 6)
         pygame.draw.circle(self.screen, self.RED, (int(p2_x), int(p2_y)), 10)
+
+        # Visualize Theta2
+        # Vertical reference at joint 1
+        pygame.draw.line(self.screen, self.GRAY, (int(p1_x), int(p1_y)), (int(p1_x), int(p1_y + 50)), 1)
+        t2_text = self.font.render(f"q2", True, self.RED)
+        self.screen.blit(t2_text, (int(p1_x + 10), int(p1_y + 20)))
         
         # Force Indicator
         if abs(force) > 0.1:

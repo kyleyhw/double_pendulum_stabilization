@@ -5,10 +5,18 @@
 We model the double pendulum stabilization as a **Markov Decision Process (MDP)** defined by the tuple $(S, A, P, R, \gamma)$:
 
 *   **State Space ($S$)**: Continuous, 8-dimensional.
-    $$ s = [x, \sin\theta_1, \cos\theta_1, \sin\theta_2, \cos\theta_2, \dot{x}, \dot{\theta}_1, \dot{\theta}_2] $$
+
+    $$
+    s = [x, \sin\theta_1, \cos\theta_1, \sin\theta_2, \cos\theta_2, \dot{x}, \dot{\theta}_1, \dot{\theta}_2]
+    $$
+
     We use trigonometric encoding for angles to avoid discontinuities at $\pm \pi$.
 *   **Action Space ($A$)**: Continuous, 1-dimensional.
-    $$ a \in [-1, 1] $$
+
+    $$
+    a \in [-1, 1]
+    $$
+
     Represents the normalized force applied to the cart. The actual force is scaled by $F_{max}$.
 *   **Dynamics ($P$)**: Deterministic physics governed by the Lagrangian equations of motion (see `physics_derivation.md`).
 *   **Reward Function ($R$)**: Dense, shaped reward to guide the agent towards the unstable equilibrium.
@@ -21,7 +29,11 @@ We use **PPO-Clip**, a policy gradient algorithm that optimizes a surrogate obje
 ### 2.1 Objective Function
 The PPO objective is designed to maximize the expected return while limiting the change in the policy distribution between updates.
 
-$$ L^{CLIP}(\theta) = \hat{\mathbb{E}}_t \left[ \min(r_t(\theta)\hat{A}_t, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t) \right] $$
+
+$$
+L^{CLIP}(\theta) = \hat{\mathbb{E}}_t \left[ \min(r_t(\theta)\hat{A}_t, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t) \right]
+$$
+
 
 Where:
 *   $\pi_\theta(a_t|s_t)$ is the current policy.
@@ -33,7 +45,11 @@ Where:
 ### 2.2 Total Loss
 The final loss function minimized by the optimizer includes the value function error and an entropy bonus for exploration:
 
-$$ L_{total} = -L^{CLIP}(\theta) + c_1 L^{VF}(\theta) - c_2 S[\pi_\theta](s_t) $$
+
+$$
+L_{total} = -L^{CLIP}(\theta) + c_1 L^{VF}(\theta) - c_2 S[\pi_\theta](s_t)
+$$
+
 
 *   $L^{VF}(\theta) = (V_\theta(s_t) - V_t^{target})^2$: Mean Squared Error of the value predictor.
 *   $S[\pi_\theta]$: Entropy of the policy distribution. Maximizing entropy prevents premature convergence to suboptimal deterministic policies.
@@ -43,11 +59,19 @@ $$ L_{total} = -L^{CLIP}(\theta) + c_1 L^{VF}(\theta) - c_2 S[\pi_\theta](s_t) $
 
 The reward function is the critical signal that tells the agent what "success" looks like. We use a quadratic cost formulation (similar to LQR) transformed into a reward.
 
-$$ r_t = - \left( w_{\theta_1} \tilde{\theta}_1^2 + w_{\theta_2} \tilde{\theta}_2^2 + w_x x^2 + w_{\dot{q}} \|\dot{q}\|^2 \right) + C_{alive} $$
+
+$$
+r_t = - \left( w_{\theta_1} \tilde{\theta}_1^2 + w_{\theta_2} \tilde{\theta}_2^2 + w_x x^2 + w_{\dot{q}} \|\dot{q}\|^2 \right) + C_{alive}
+$$
+
 
 ### Terms:
 1.  **Angle Errors ($\tilde{\theta}_i$)**:
-    $$ \tilde{\theta}_i = \text{normalize}(\theta_i - \pi) $$
+
+    $$
+    \tilde{\theta}_i = \text{normalize}(\theta_i - \pi)
+    $$
+
     Measures the deviation from the upright position ($\pi$). We want this to be 0.
 2.  **Cart Position ($x$)**:
     Penalizes the cart for moving away from the center of the track ($x=0$). This prevents the agent from "cheating" by running off to infinity to balance the pendulum.
