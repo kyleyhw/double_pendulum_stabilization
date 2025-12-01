@@ -26,145 +26,9 @@ class Visualizer:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("Arial", 16)
         
-    def render(self, state, force=0.0, external_force=0.0, episode=0, step=0, reward=0.0):
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-                
-    def draw_background(self):
-        self.screen.fill(self.WHITE)
-        
-        # Center of screen is (width/2, height/2)
-        ox = self.width / 2
-        oy = self.height / 2
-        
-        # Draw Coordinate System (Cartesian)
-        for i in range(-5, 6):
-            gx = int(ox + i * self.scale)
-            pygame.draw.line(self.screen, (240, 240, 240), (gx, 0), (gx, self.height), 1)
-            gy = int(oy + i * self.scale)
-            pygame.draw.line(self.screen, (240, 240, 240), (0, gy), (self.width, gy), 1)
-
-        # Main Axes
-        pygame.draw.line(self.screen, self.GRAY, (int(ox), 0), (int(ox), self.height), 1)
-        pygame.draw.line(self.screen, self.GRAY, (0, int(oy)), (self.width, int(oy)), 1)
-        
-        # Labels
-        x_label = self.font.render("x (m)", True, self.GRAY)
-        y_label = self.font.render("y (m)", True, self.GRAY)
-        self.screen.blit(x_label, (self.width - 40, int(oy) + 5))
-        self.screen.blit(y_label, (int(ox) + 5, 5))
-        
-        # Draw Track
-        pygame.draw.line(self.screen, self.BLACK, (0, int(oy)), (self.width, int(oy)), 2)
-
-    def draw_pendulum(self, state, color_p1=None, color_p2=None, alpha=255):
-        if color_p1 is None: color_p1 = self.BLUE
-        if color_p2 is None: color_p2 = self.RED
-        
-        x, theta1, theta2, _, _, _ = state
-        
-        ox = self.width / 2
-        oy = self.height / 2
-        
-        cart_x = ox + x * self.scale
-        cart_y = oy
-        
-        l1 = self.env.l1 * self.scale
-        l2 = self.env.l2 * self.scale
-        
-        p1_x = cart_x + l1 * np.sin(theta1)
-        p1_y = cart_y + l1 * np.cos(theta1)
-        
-        p2_x = p1_x + l2 * np.sin(theta2)
-        p2_y = p1_y + l2 * np.cos(theta2)
-        
-        # Create a surface for transparency if alpha < 255
-        if alpha < 255:
-            s = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-            
-            # Cart
-            cart_w = 0.6 * self.scale
-            cart_h = 0.3 * self.scale
-            cart_rect = pygame.Rect(int(cart_x - cart_w/2), int(cart_y - cart_h/2), int(cart_w), int(cart_h))
-            pygame.draw.rect(s, (*self.BLACK, alpha), cart_rect)
-            
-            # Links
-            pygame.draw.line(s, (*color_p1, alpha), (int(cart_x), int(cart_y)), (int(p1_x), int(p1_y)), 6)
-            pygame.draw.circle(s, (*color_p1, alpha), (int(p1_x), int(p1_y)), 10)
-            
-            pygame.draw.line(s, (*color_p2, alpha), (int(p1_x), int(p1_y)), (int(p2_x), int(p2_y)), 6)
-            pygame.draw.circle(s, (*color_p2, alpha), (int(p2_x), int(p2_y)), 10)
-            
-            self.screen.blit(s, (0,0))
-        else:
-            # Cart
-            cart_w = 0.6 * self.scale
-            cart_h = 0.3 * self.scale
-            cart_rect = pygame.Rect(int(cart_x - cart_w/2), int(cart_y - cart_h/2), int(cart_w), int(cart_h))
-            pygame.draw.rect(self.screen, self.BLACK, cart_rect)
-            
-            # Links
-            pygame.draw.line(self.screen, color_p1, (int(cart_x), int(cart_y)), (int(p1_x), int(p1_y)), 6)
-            pygame.draw.circle(self.screen, color_p1, (int(p1_x), int(p1_y)), 10)
-            
-            pygame.draw.line(self.screen, color_p2, (int(p1_x), int(p1_y)), (int(p2_x), int(p2_y)), 6)
-            pygame.draw.circle(self.screen, color_p2, (int(p2_x), int(p2_y)), 10)
-
-    def render(self, state, force=0.0, external_force=0.0, episode=0, step=0, reward=0.0):
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-                
-        self.draw_background()
-        self.draw_pendulum(state)
-        
-        # Force Indicators and Text (Keep existing logic but adapted)
-        ox = self.width / 2
-        oy = self.height / 2
-        cart_x = ox + state[0] * self.scale
-        cart_y = oy
-        
-        # Force Indicator
-        if abs(force) > 0.1:
-            force_len = force * 2
-            start_pos = (int(cart_x), int(cart_y))
-            end_pos = (int(cart_x + force_len), int(cart_y))
-            pygame.draw.line(self.screen, self.GREEN, start_pos, end_pos, 4)
-
-        # External Force
-        if abs(external_force) > 0.1:
-            ext_len = external_force * 2
-            start_pos = (int(cart_x), int(cart_y - 30))
-import pygame
-import numpy as np
-import sys
-
-class Visualizer:
-    def __init__(self, env):
-        self.env = env
-        
-        # Screen Dimensions
-        self.width = 800
-        self.height = 600
-        self.scale = 100 # Pixels per meter
-        
-        # Colors
-        self.WHITE = (255, 255, 255)
-        self.BLACK = (0, 0, 0)
-        self.RED = (255, 0, 0)
-        self.BLUE = (0, 0, 255)
-        self.GREEN = (0, 255, 0)
-        self.GRAY = (128, 128, 128)
-        
-        # Initialize Pygame
-        pygame.init()
-        self.screen = pygame.display.set_mode((self.width, self.height))
-        pygame.display.set_caption("Double Pendulum Stabilization")
-        self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont("Arial", 16)
+        # Reward History
+        self.reward_history = []
+        self.max_history = 100 # Show last 100 steps (2 seconds at dt=0.02)
         
     def render(self, state, force=0.0, external_force=0.0, episode=0, step=0, reward=0.0):
         for event in pygame.event.get():
@@ -172,110 +36,27 @@ class Visualizer:
                 pygame.quit()
                 sys.exit()
                 
-    def draw_background(self):
-        self.screen.fill(self.WHITE)
-        
-        # Center of screen is (width/2, height/2)
-        ox = self.width / 2
-        oy = self.height / 2
-        
-        # Draw Coordinate System (Cartesian)
-        for i in range(-5, 6):
-            gx = int(ox + i * self.scale)
-            pygame.draw.line(self.screen, (240, 240, 240), (gx, 0), (gx, self.height), 1)
-            gy = int(oy + i * self.scale)
-            pygame.draw.line(self.screen, (240, 240, 240), (0, gy), (self.width, gy), 1)
-
-        # Main Axes
-        pygame.draw.line(self.screen, self.GRAY, (int(ox), 0), (int(ox), self.height), 1)
-        pygame.draw.line(self.screen, self.GRAY, (0, int(oy)), (self.width, int(oy)), 1)
-        
-        # Labels
-        x_label = self.font.render("x (m)", True, self.GRAY)
-        y_label = self.font.render("y (m)", True, self.GRAY)
-        self.screen.blit(x_label, (self.width - 40, int(oy) + 5))
-        self.screen.blit(y_label, (int(ox) + 5, 5))
-        
-        # Draw Track
-        pygame.draw.line(self.screen, self.BLACK, (0, int(oy)), (self.width, int(oy)), 2)
-
-    def draw_pendulum(self, state, color_p1=None, color_p2=None, alpha=255):
-        if color_p1 is None: color_p1 = self.BLUE
-        if color_p2 is None: color_p2 = self.RED
-        
-        x, theta1, theta2, _, _, _ = state
-        
-        ox = self.width / 2
-        oy = self.height / 2
-        
-        cart_x = ox + x * self.scale
-        cart_y = oy
-        
-        l1 = self.env.l1 * self.scale
-        l2 = self.env.l2 * self.scale
-        
-        p1_x = cart_x + l1 * np.sin(theta1)
-        p1_y = cart_y + l1 * np.cos(theta1)
-        
-        p2_x = p1_x + l2 * np.sin(theta2)
-        p2_y = p1_y + l2 * np.cos(theta2)
-        
-        # Create a surface for transparency if alpha < 255
-        if alpha < 255:
-            s = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        # Update Reward History
+        self.reward_history.append(reward)
+        if len(self.reward_history) > self.max_history:
+            self.reward_history.pop(0)
             
-            # Cart
-            cart_w = 0.6 * self.scale
-            cart_h = 0.3 * self.scale
-            cart_rect = pygame.Rect(int(cart_x - cart_w/2), int(cart_y - cart_h/2), int(cart_w), int(cart_h))
-            pygame.draw.rect(s, (*self.BLACK, alpha), cart_rect)
-            
-            # Links
-            pygame.draw.line(s, (*color_p1, alpha), (int(cart_x), int(cart_y)), (int(p1_x), int(p1_y)), 6)
-            pygame.draw.circle(s, (*color_p1, alpha), (int(p1_x), int(p1_y)), 10)
-            
-            pygame.draw.line(s, (*color_p2, alpha), (int(p1_x), int(p1_y)), (int(p2_x), int(p2_y)), 6)
-            pygame.draw.circle(s, (*color_p2, alpha), (int(p2_x), int(p2_y)), 10)
-            
-            self.screen.blit(s, (0,0))
-        else:
-            # Cart
-            cart_w = 0.6 * self.scale
-            cart_h = 0.3 * self.scale
-            cart_rect = pygame.Rect(int(cart_x - cart_w/2), int(cart_y - cart_h/2), int(cart_w), int(cart_h))
-            pygame.draw.rect(self.screen, self.BLACK, cart_rect)
-            
-            # Links
-            pygame.draw.line(self.screen, color_p1, (int(cart_x), int(cart_y)), (int(p1_x), int(p1_y)), 6)
-            pygame.draw.circle(self.screen, color_p1, (int(p1_x), int(p1_y)), 10)
-            
-            pygame.draw.line(self.screen, color_p2, (int(p1_x), int(p1_y)), (int(p2_x), int(p2_y)), 6)
-            pygame.draw.circle(self.screen, color_p2, (int(p2_x), int(p2_y)), 10)
-
-    def render(self, state, force=0.0, external_force=0.0, episode=0, step=0, reward=0.0):
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-                
         self.draw_background()
         if state is not None:
             self.draw_pendulum(state)
         
-        # Force Indicators and Text
+        # Force Indicators
         ox = self.width / 2
         oy = self.height / 2
         cart_x = ox + state[0] * self.scale
         cart_y = oy
         
-        # Force Indicator
         if abs(force) > 0.1:
             force_len = force * 2
             start_pos = (int(cart_x), int(cart_y))
             end_pos = (int(cart_x + force_len), int(cart_y))
             pygame.draw.line(self.screen, self.GREEN, start_pos, end_pos, 4)
 
-        # External Force
         if abs(external_force) > 0.1:
             ext_len = external_force * 2
             start_pos = (int(cart_x), int(cart_y - 30))
@@ -283,6 +64,9 @@ class Visualizer:
             pygame.draw.line(self.screen, (255, 0, 255), start_pos, end_pos, 4)
             label = self.font.render("Ext", True, (255, 0, 255))
             self.screen.blit(label, (int(cart_x), int(cart_y - 50)))
+
+        # Draw Reward Plot
+        self.draw_reward_plot()
 
         # Info Text
         info_text = [
@@ -301,6 +85,134 @@ class Visualizer:
             
         pygame.display.flip()
         self.clock.tick(60)
+
+    def draw_background(self):
+        self.screen.fill(self.WHITE)
+        
+        # Center of screen is (width/2, height/2)
+        ox = self.width / 2
+        oy = self.height / 2
+        
+        # Draw Coordinate System (Cartesian)
+        for i in range(-5, 6):
+            gx = int(ox + i * self.scale)
+            pygame.draw.line(self.screen, (240, 240, 240), (gx, 0), (gx, self.height), 1)
+            gy = int(oy + i * self.scale)
+            pygame.draw.line(self.screen, (240, 240, 240), (0, gy), (self.width, gy), 1)
+
+        # Main Axes
+        pygame.draw.line(self.screen, self.GRAY, (int(ox), 0), (int(ox), self.height), 1)
+        pygame.draw.line(self.screen, self.GRAY, (0, int(oy)), (self.width, int(oy)), 1)
+        
+        # Labels
+        x_label = self.font.render("x (m)", True, self.GRAY)
+        y_label = self.font.render("y (m)", True, self.GRAY)
+        self.screen.blit(x_label, (self.width - 40, int(oy) + 5))
+        self.screen.blit(y_label, (int(ox) + 5, 5))
+        
+        # Draw Track
+        pygame.draw.line(self.screen, self.BLACK, (0, int(oy)), (self.width, int(oy)), 2)
+
+    def draw_pendulum(self, state, color_p1=None, color_p2=None, alpha=255):
+        if color_p1 is None: color_p1 = self.BLUE
+        if color_p2 is None: color_p2 = self.RED
+        
+        x, theta1, theta2, _, _, _ = state
+        
+        ox = self.width / 2
+        oy = self.height / 2
+        
+        cart_x = ox + x * self.scale
+        cart_y = oy
+        
+        l1 = self.env.l1 * self.scale
+        l2 = self.env.l2 * self.scale
+        
+        p1_x = cart_x + l1 * np.sin(theta1)
+        p1_y = cart_y + l1 * np.cos(theta1)
+        
+        p2_x = p1_x + l2 * np.sin(theta2)
+        p2_y = p1_y + l2 * np.cos(theta2)
+        
+        # Create a surface for transparency if alpha < 255
+        if alpha < 255:
+            s = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            
+            # Cart
+            cart_w = 0.6 * self.scale
+            cart_h = 0.3 * self.scale
+            cart_rect = pygame.Rect(int(cart_x - cart_w/2), int(cart_y - cart_h/2), int(cart_w), int(cart_h))
+            pygame.draw.rect(s, (*self.BLACK, alpha), cart_rect)
+            
+            # Links
+            pygame.draw.line(s, (*color_p1, alpha), (int(cart_x), int(cart_y)), (int(p1_x), int(p1_y)), 6)
+            pygame.draw.circle(s, (*color_p1, alpha), (int(p1_x), int(p1_y)), 10)
+            
+            pygame.draw.line(s, (*color_p2, alpha), (int(p1_x), int(p1_y)), (int(p2_x), int(p2_y)), 6)
+            pygame.draw.circle(s, (*color_p2, alpha), (int(p2_x), int(p2_y)), 10)
+            
+            self.screen.blit(s, (0,0))
+        else:
+            # Cart
+            cart_w = 0.6 * self.scale
+            cart_h = 0.3 * self.scale
+            cart_rect = pygame.Rect(int(cart_x - cart_w/2), int(cart_y - cart_h/2), int(cart_w), int(cart_h))
+            pygame.draw.rect(self.screen, self.BLACK, cart_rect)
+            
+            # Links
+            pygame.draw.line(self.screen, color_p1, (int(cart_x), int(cart_y)), (int(p1_x), int(p1_y)), 6)
+            pygame.draw.circle(self.screen, color_p1, (int(p1_x), int(p1_y)), 10)
+            
+            pygame.draw.line(self.screen, color_p2, (int(p1_x), int(p1_y)), (int(p2_x), int(p2_y)), 6)
+            pygame.draw.circle(self.screen, color_p2, (int(p2_x), int(p2_y)), 10)
+
+    def draw_reward_plot(self):
+        """Draws a rolling plot of the reward history in the bottom right corner."""
+        if not self.reward_history:
+            return
+            
+        # Plot Dimensions
+        plot_w = 200
+        plot_h = 100
+        margin = 10
+        x_start = self.width - plot_w - margin
+        y_start = self.height - plot_h - margin
+        
+        # Background
+        bg_rect = pygame.Rect(x_start, y_start, plot_w, plot_h)
+        pygame.draw.rect(self.screen, (240, 240, 240), bg_rect)
+        pygame.draw.rect(self.screen, self.GRAY, bg_rect, 1) # Border
+        
+        # Normalize Data
+        # We want to see dynamics, so auto-scale, but keep 0 as min if possible
+        max_r = max(self.reward_history)
+        if max_r < 1.0: max_r = 1.0 # Keep scale reasonable
+        min_r = 0.0
+        
+        points = []
+        for i, r in enumerate(self.reward_history):
+            # x coordinate
+            # We want the plot to scroll.
+            # If len < max_history, fill from left.
+            # If len == max_history, it's a full window.
+            
+            px = x_start + (i / (self.max_history - 1)) * plot_w if self.max_history > 1 else x_start
+            
+            # y coordinate (inverted because screen y is down)
+            if max_r > min_r:
+                norm_r = (r - min_r) / (max_r - min_r)
+            else:
+                norm_r = 0
+            
+            py = y_start + plot_h - (norm_r * plot_h)
+            points.append((px, py))
+            
+        if len(points) > 1:
+            pygame.draw.lines(self.screen, self.BLUE, False, points, 2)
+            
+        # Label
+        label = self.font.render(f"Reward (Max: {max_r:.1f})", True, self.BLACK)
+        self.screen.blit(label, (x_start, y_start - 20))
 
     def get_frame(self):
         """Returns the current screen as a numpy array (H, W, 3) in RGB."""
