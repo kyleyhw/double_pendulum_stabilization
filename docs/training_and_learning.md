@@ -80,13 +80,10 @@ $$
     Penalizes the cart for moving away from the center of the track ($x=0$). This prevents the agent from "cheating" by running off to infinity to balance the pendulum.
 3.  **Angular Velocities ($\dot{q}$)**:
     Penalizes high velocities. Stability implies $\dot{\theta} \approx 0$.
-    Penalizes high velocities. Stability implies $\dot{\theta} \approx 0$.
 4.  **Implicit Survival Incentive**:
     Since $r_t > 0$ always, the agent maximizes return by keeping the episode going as long as possible.
 
 ### Weights:
-*   $w_{\theta_1} = 1.0$: High priority on the first link.
-*   $w_{\theta_2} = 1.0$: High priority on the second link.
 *   $w_{\theta_1} = 1.0$: High priority on the first link.
 *   $w_{\theta_2} = 1.0$: High priority on the second link.
 *   $w_x = 0.5$: **Increased Priority** on cart position to encourage re-centering and prevent wall crashes.

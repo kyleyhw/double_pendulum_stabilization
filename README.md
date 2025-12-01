@@ -13,7 +13,6 @@ We use **Proximal Policy Optimization (PPO)**, a state-of-the-art Deep Reinforce
 *   **Architecture**: The agent uses a **Neural Network** (Multi-Layer Perceptron) with two heads:
     *   **Actor (Policy)**: Outputs the mean and standard deviation of a Gaussian distribution for the action (force). This allows the agent to "explore" the state space stochastically.
     *   **Critic (Value)**: Estimates the expected future reward from the current state, used to compute the "advantage" of an action.
-    *   **Critic (Value)**: Estimates the expected future reward from the current state, used to compute the "advantage" of an action.
 *   **Exploration**:
     *   **Stochastic Policy**: The agent samples actions from a Gaussian distribution.
     *   **Zero-Mean Initialization**: The policy is initialized to be unbiased (zero mean), ensuring the agent explores both directions (Left/Right) equally at the start.
@@ -75,14 +74,12 @@ $$
 The reward function $r(s, a)$ is designed to penalize deviation from the upright equilibrium:
 
 $$
-$$
 r = \exp \left( - (w_1 \theta_{1,err}^2 + w_2 \theta_{2,err}^2 + w_3 x^2 + w_4 \|\dot{q}\|^2) \right)
 $$
 
 *   **Rewarded ($r \to 1.0$)**: Perfectly upright ($\theta = \pi$), centered ($x=0$), and stationary.
 *   **Penalized ($r \to 0.0$)**: Deviating from the target state.
 *   **Neutral/Survival**: Staying alive (even at the bottom) yields a small positive reward ($>0$), which is strictly better than crashing (reward $0$), preventing the "suicide bug" where the agent crashes intentionally to avoid negative penalties.
-$$
 
 
 ## 4. Project Structure & Separation
