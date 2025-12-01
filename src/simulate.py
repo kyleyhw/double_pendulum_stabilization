@@ -3,7 +3,9 @@ import numpy as np
 import sys
 import os
 import argparse
+import argparse
 import time
+import pygame
 
 # Add src to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -12,7 +14,7 @@ from src.env.double_pendulum import DoublePendulumCartEnv
 from src.agent.ppo import PPOAgent
 from src.utils.visualizer import Visualizer
 
-def run_simulation(model_path=None, duration=20.0):
+def run_simulation(model_path=None, duration=20.0, wind_std=0.0):
     """
     Runs the simulation loop with visualization.
     
@@ -20,7 +22,7 @@ def run_simulation(model_path=None, duration=20.0):
         model_path (str): Path to a saved PPO checkpoint. If None, uses random actions.
         duration (float): Duration to run in seconds.
     """
-    env = DoublePendulumCartEnv()
+    env = DoublePendulumCartEnv(wind_std=wind_std)
     viz = Visualizer(env)
     
     state_dim = env.observation_space.shape[0]
@@ -40,7 +42,10 @@ def run_simulation(model_path=None, duration=20.0):
     start_time = time.time()
     
     print("Starting simulation...")
-    print("Press Close on the window to exit.")
+    print("Controls:")
+    print("  LEFT ARROW : Apply force Left")
+    print("  RIGHT ARROW: Apply force Right")
+    print("  Close window to exit.")
     
     try:
         while time.time() - start_time < duration:
@@ -50,11 +55,26 @@ def run_simulation(model_path=None, duration=20.0):
             else:
                 action = env.action_space.sample()
             
+            # Handle User Input (Impulses)
+            keys = pygame.key.get_pressed()
+            impulse = 0.0
+            if keys[pygame.K_LEFT]:
+                impulse = -10.0 # Push Left
+            elif keys[pygame.K_RIGHT]:
+                impulse = 10.0 # Push Right
+            
+            if impulse != 0:
+                env.apply_impulse(impulse)
+            
             # Step Env
             next_state, reward, terminated, truncated, _ = env.step(action)
             
             # Render
-            viz.render(state, force=action[0], step=step, reward=reward)
+            # Note: Wind force is internal to env, we can't easily get the exact random value 
+            # unless we return it or access it. For viz, let's just show the impulse + approximate wind.
+            # Actually, let's just show the impulse for clarity, or maybe we can hack it.
+            # For now, just show impulse.
+            viz.render(state, force=action[0], external_force=impulse, step=step, reward=reward)
             
             state = next_state
             step += 1
@@ -74,6 +94,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, help="Path to trained model checkpoint (.pth)")
     parser.add_argument("--duration", type=float, default=30.0, help="Duration in seconds")
     
+    parser.add_argument("--wind", type=float, default=0.0, help="Standard deviation of wind force")
+    
     args = parser.parse_args()
     
-    run_simulation(args.model, args.duration)
+    run_simulation(args.model, args.duration, args.wind)

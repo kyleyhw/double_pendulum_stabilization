@@ -37,9 +37,9 @@ This document outlines the planned phases and tasks for developing Double Pendul
     - [completed] Output: `src/utils/visualizer.py`.
 
 ## Phase 4: Robustness & Perturbations
-9.  [pending] Perturbation Mechanism.
-    - [pending] Allow user to apply impulsive forces (mouse click or key press).
-    - [pending] Simulate continuous wind (random noise added to state/force).
+9.  [completed] Perturbation Mechanism.
+    - [completed] Allow user to apply impulsive forces (mouse click or key press).
+    - [completed] Simulate continuous wind (random noise added to state/force).
 10. [pending] Stress Testing.
     - [pending] Quantify the maximum recoverable angle/velocity.
     - [pending] Output: `docs/robustness_report.md`.

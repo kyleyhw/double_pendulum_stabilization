@@ -26,7 +26,7 @@ class Visualizer:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("Arial", 16)
         
-    def render(self, state, force=0.0, episode=0, step=0, reward=0.0):
+    def render(self, state, force=0.0, external_force=0.0, episode=0, step=0, reward=0.0):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -121,6 +121,17 @@ class Visualizer:
             end_pos = (int(cart_x + force_len), int(cart_y))
             pygame.draw.line(self.screen, self.GREEN, start_pos, end_pos, 4)
             # Arrowhead
+            
+        # External Force Indicator (Impulse/Wind)
+        if abs(external_force) > 0.1:
+            ext_len = external_force * 2
+            # Draw slightly above the cart
+            start_pos = (int(cart_x), int(cart_y - 30))
+            end_pos = (int(cart_x + ext_len), int(cart_y - 30))
+            pygame.draw.line(self.screen, (255, 0, 255), start_pos, end_pos, 4) # Magenta
+            # Label
+            label = self.font.render("Ext", True, (255, 0, 255))
+            self.screen.blit(label, (int(cart_x), int(cart_y - 50)))
             
         # Info Text
         info_text = [

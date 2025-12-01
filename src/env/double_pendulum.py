@@ -21,7 +21,7 @@ class DoublePendulumCartEnv(gym.Env):
     
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
-    def __init__(self, render_mode: Optional[str] = None):
+    def __init__(self, render_mode: Optional[str] = None, wind_std: float = 0.0):
         super().__init__()
         
         # System Parameters
@@ -34,6 +34,8 @@ class DoublePendulumCartEnv(gym.Env):
         
         self.dt = 0.02    # Time step [s]
         self.force_mag = 20.0 # Max force magnitude
+        self.wind_std = wind_std # Standard deviation of wind force noise
+        self.current_impulse = 0.0 # Instantaneous impulse force
         
         # Action Space: Continuous force [-F_max, F_max]
         self.action_space = spaces.Box(
@@ -79,6 +81,14 @@ class DoublePendulumCartEnv(gym.Env):
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         force = np.clip(action[0], -self.force_mag, self.force_mag)
+        
+        # Add Wind (Continuous Noise)
+        if self.wind_std > 0:
+            force += self.np_random.normal(0, self.wind_std)
+            
+        # Add Impulse (Instantaneous)
+        force += self.current_impulse
+        self.current_impulse = 0.0 # Reset impulse after one step
         
         # RK4 Integration
         self.state = self._rk4_step(self.state, force, self.dt)
@@ -128,6 +138,10 @@ class DoublePendulumCartEnv(gym.Env):
  
         
         return self._get_obs(), reward, terminated, truncated, {}
+
+    def apply_impulse(self, force: float):
+        """Apply an instantaneous force to the cart."""
+        self.current_impulse = force
 
     def _rk4_step(self, state: np.ndarray, force: float, dt: float) -> np.ndarray:
         """Runge-Kutta 4th Order Integration"""

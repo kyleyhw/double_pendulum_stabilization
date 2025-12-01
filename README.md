@@ -109,4 +109,23 @@ pip install -r requirements.txt
 ### Running
 *   **Train**: `python src/train.py`
 *   **Visualize**: `python src/simulate.py`
-*   **Progress Montage**: `python src/visualize_progress.py`
+**Progress Montage**:
+To see the agent's improvement over time (requires multiple checkpoints in `logs/`):
+```bash
+# View on screen
+python src/visualize_progress.py
+
+# Save as GIF
+python src/visualize_progress.py --save_gif --output docs/images/training_montage.gif
+```
+
+### Robustness Testing
+You can test the agent's stability against external forces (wind, pushes).
+See [docs/robustness.md](docs/robustness.md) for details.
+
+```bash
+# Run with wind
+python src/simulate.py --wind 2.0
+
+# Use Left/Right Arrow keys to push the cart during simulation.
+```
