@@ -34,6 +34,11 @@ def train():
     os.makedirs(log_dir, exist_ok=True)
     run_name = datetime.now().strftime("%Y%m%d_%H%M%S")
     
+    # CSV Logging
+    log_file = os.path.join(log_dir, f"training_log_{run_name}.csv")
+    with open(log_file, "w") as f:
+        f.write("episode,reward,length\n")
+
     print(f"Starting training: {run_name}")
     print(f"State Dim: {state_dim}, Action Dim: {action_dim}")
     
@@ -77,6 +82,10 @@ def train():
         
         running_reward += current_ep_reward
         avg_length += t
+        
+        # Log to CSV
+        with open(log_file, "a") as f:
+            f.write(f"{i_episode},{current_ep_reward},{t}\n")
         
         # Logging
         if i_episode % log_interval == 0:

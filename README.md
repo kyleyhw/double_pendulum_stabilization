@@ -8,6 +8,8 @@ The goal of this project is to stabilize a **double pendulum on a cart** in the 
 ## 2. Training Methodology
 We use **Proximal Policy Optimization (PPO)**, a state-of-the-art Deep Reinforcement Learning algorithm.
 
+![Learning Curve](docs/images/learning_curve.png)
+
 *   **Architecture**: The agent uses a **Neural Network** (Multi-Layer Perceptron) with two heads:
     *   **Actor (Policy)**: Outputs the mean and standard deviation of a Gaussian distribution for the action (force). This allows the agent to "explore" the state space stochastically.
     *   **Critic (Value)**: Estimates the expected future reward from the current state, used to compute the "advantage" of an action.
