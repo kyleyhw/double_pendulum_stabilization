@@ -137,17 +137,38 @@ class DoublePendulumCartEnv(gym.Env):
         
         # Gaussian Reward (Positive)
         # R = exp(-distance^2)
-        # This ensures reward is in [0, 1].
-        # Staying alive (even at bottom) gives small positive reward > 0 (crash).
         
+        # 1. Spatial Reward (Alignment)
         dist_sq = (
             w1 * t1_err**2 + 
             w2 * t2_err**2 + 
             w3 * x**2 + 
             w4 * (theta1_dot**2 + theta2_dot**2)
         )
+        r_spatial = np.exp(-dist_sq)
         
-        reward = np.exp(-dist_sq)
+        # 2. Energy Reward (Shaping)
+        # Target Energy (Up-Up Equilibrium: theta1=pi, theta2=pi, velocities=0)
+        # V_target = -(m1+m2)g l1 cos(pi) - m2 g l2 cos(pi) = (m1+m2)g l1 + m2 g l2
+        target_energy = (self.m1 + self.m2) * self.g * self.l1 + self.m2 * self.g * self.l2
+        current_energy = self._get_energy()
+        
+        # Energy difference
+        energy_diff = np.abs(current_energy - target_energy)
+        
+        # Scale energy difference? Energy can be large (~40J).
+        # We want the kernel width to be reasonable.
+        # If diff is 10J, exp(-10) is tiny.
+        # Let's normalize or scale sigma.
+        # sigma_e = 10.0
+        r_energy = np.exp(-energy_diff / 10.0)
+        
+        # Combined Reward
+        # Hybrid: w_spatial * r_spatial + w_energy * r_energy
+        w_spatial = 0.6
+        w_energy = 0.4
+        
+        reward = w_spatial * r_spatial + w_energy * r_energy
 
  
         
@@ -238,6 +259,53 @@ class DoublePendulumCartEnv(gym.Env):
         q_dd = np.linalg.solve(M_mat, RHS)
         
         return np.concatenate(([x_dot, theta1_dot, theta2_dot], q_dd))
+
+    def _get_energy(self) -> float:
+        """Computes Total Energy (T + V) of the system."""
+        x, theta1, theta2, x_dot, theta1_dot, theta2_dot = self.state
+        
+        # Constants
+        M, m1, m2 = self.M, self.m1, self.m2
+        l1, l2 = self.l1, self.l2
+        g = self.g
+        
+        # Kinetic Energy T = 0.5 * q_dot.T * M(q) * q_dot
+        # We can reuse the M_mat calculation or simplify.
+        # Let's reuse the logic from _dynamics for consistency, but optimized.
+        
+        c1 = np.cos(theta1)
+        c2 = np.cos(theta2)
+        c12 = np.cos(theta1 - theta2)
+        
+        # Mass Matrix M(q)
+        M11 = M + m1 + m2
+        M12 = (m1 + m2) * l1 * c1
+        M13 = m2 * l2 * c2
+        M22 = (m1 + m2) * l1**2
+        M23 = m2 * l1 * l2 * c12
+        M33 = m2 * l2**2
+        
+        # T = 0.5 * (M11 xd^2 + M22 th1d^2 + M33 th2d^2 + 2 M12 xd th1d + 2 M13 xd th2d + 2 M23 th1d th2d)
+        T = 0.5 * (
+            M11 * x_dot**2 +
+            M22 * theta1_dot**2 +
+            M33 * theta2_dot**2 +
+            2 * M12 * x_dot * theta1_dot +
+            2 * M13 * x_dot * theta2_dot +
+            2 * M23 * theta1_dot * theta2_dot
+        )
+        
+        # Potential Energy V
+        # 0 is Down (theta=0). Up is theta=pi.
+        # V = -m g h.
+        # h1 = -l1 cos(theta1)
+        # h2 = -l1 cos(theta1) - l2 cos(theta2)
+        # V = m1 g h1 + m2 g h2
+        # V = -(m1+m2) g l1 cos(theta1) - m2 g l2 cos(theta2)
+        
+        V = -(m1 + m2) * g * l1 * c1 - m2 * g * l2 * c2
+        
+        return T + V
 
     def render(self):
         pass
