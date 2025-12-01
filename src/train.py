@@ -18,7 +18,7 @@ def train():
     
     # Logging
     log_interval = 20          # Print avg reward every n episodes
-    save_interval = 500        # Save model every n episodes
+    save_interval = 200        # Save model every n episodes
     
     # Create Env
     env = DoublePendulumCartEnv()
