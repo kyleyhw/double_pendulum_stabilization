@@ -22,7 +22,7 @@ This document outlines the planned phases and tasks for developing Double Pendul
     - [completed] Library: `stable-baselines3` (as a baseline) or custom implementation.
 5.  [completed] Reward Function Engineering.
     - [completed] Design reward $R$ to maximize upright time and minimize cart displacement.
-    - [completed] $R = - (w_1 \theta_1^2 + w_2 \theta_2^2 + w_3 x^2 + w_4 \dot{q}^T \dot{q})$.
+    - [completed] $R = \exp(-(w_1 \theta_1^2 + w_2 \theta_2^2 + w_3 x^2 + w_4 \dot{q}^T \dot{q}))$.
 6.  [completed] Training Loop.
     - [completed] Implement the interaction loop.
     - [completed] Logging of metrics (reward, episode length).
