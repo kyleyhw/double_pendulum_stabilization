@@ -32,40 +32,23 @@ class Visualizer:
                 pygame.quit()
                 sys.exit()
                 
+    def draw_background(self):
         self.screen.fill(self.WHITE)
         
-        # Unpack State
-        x, theta1, theta2, x_dot, theta1_dot, theta2_dot = state
-        
-        # Dimensions
-        cart_w = 0.6 * self.scale
-        cart_h = 0.3 * self.scale
-        l1 = self.env.l1 * self.scale
-        l2 = self.env.l2 * self.scale
-        
         # Center of screen is (width/2, height/2)
-        # World origin (0,0) is at (width/2, height/2)
         ox = self.width / 2
         oy = self.height / 2
         
-        # Cart Position
-        cart_x = ox + x * self.scale
-        cart_y = oy
-        
         # Draw Coordinate System (Cartesian)
-        # Origin is at (ox, oy)
-        # Draw grid lines every 1 meter (scale pixels)
         for i in range(-5, 6):
-            # Vertical lines
             gx = int(ox + i * self.scale)
             pygame.draw.line(self.screen, (240, 240, 240), (gx, 0), (gx, self.height), 1)
-            # Horizontal lines
             gy = int(oy + i * self.scale)
             pygame.draw.line(self.screen, (240, 240, 240), (0, gy), (self.width, gy), 1)
 
         # Main Axes
-        pygame.draw.line(self.screen, self.GRAY, (int(ox), 0), (int(ox), self.height), 1) # Y-axis
-        pygame.draw.line(self.screen, self.GRAY, (0, int(oy)), (self.width, int(oy)), 1) # X-axis
+        pygame.draw.line(self.screen, self.GRAY, (int(ox), 0), (int(ox), self.height), 1)
+        pygame.draw.line(self.screen, self.GRAY, (0, int(oy)), (self.width, int(oy)), 1)
         
         # Labels
         x_label = self.font.render("x (m)", True, self.GRAY)
@@ -75,73 +58,100 @@ class Visualizer:
         
         # Draw Track
         pygame.draw.line(self.screen, self.BLACK, (0, int(oy)), (self.width, int(oy)), 2)
+
+    def draw_pendulum(self, state, color_p1=None, color_p2=None, alpha=255):
+        if color_p1 is None: color_p1 = self.BLUE
+        if color_p2 is None: color_p2 = self.RED
         
-        # Draw Cart
-        cart_rect = pygame.Rect(int(cart_x - cart_w/2), int(cart_y - cart_h/2), int(cart_w), int(cart_h))
-        pygame.draw.rect(self.screen, self.BLACK, cart_rect)
+        x, theta1, theta2, _, _, _ = state
         
-        # Pendulum 1
-        # theta=0 is UP in our derivation? No, derivation said 0 is DOWN.
-        # But in Env reset, we set theta ~ pi for UP.
-        # So if theta=pi, it should be UP.
-        # Coordinates: x1 = x + l1 sin(theta1), y1 = -l1 cos(theta1) (y is UP)
-        # Screen y is DOWN. So screen_y = oy - y_world.
+        ox = self.width / 2
+        oy = self.height / 2
+        
+        cart_x = ox + x * self.scale
+        cart_y = oy
+        
+        l1 = self.env.l1 * self.scale
+        l2 = self.env.l2 * self.scale
         
         p1_x = cart_x + l1 * np.sin(theta1)
-        p1_y = cart_y + l1 * np.cos(theta1) # + because screen Y is down, and cos(pi)=-1 -> up
+        p1_y = cart_y + l1 * np.cos(theta1)
         
-        pygame.draw.line(self.screen, self.BLUE, (int(cart_x), int(cart_y)), (int(p1_x), int(p1_y)), 6)
-        pygame.draw.circle(self.screen, self.BLUE, (int(p1_x), int(p1_y)), 10)
-        
-        # Visualize Theta1
-        # Vertical reference
-        pygame.draw.line(self.screen, self.GRAY, (int(cart_x), int(cart_y)), (int(cart_x), int(cart_y + 50)), 1)
-        # Arc? Pygame arc is annoying. Let's just draw a small line indicating the angle?
-        # Or just text.
-        t1_text = self.font.render(f"q1", True, self.BLUE)
-        self.screen.blit(t1_text, (int(cart_x + 10), int(cart_y + 20)))
-
-        # Pendulum 2
         p2_x = p1_x + l2 * np.sin(theta2)
         p2_y = p1_y + l2 * np.cos(theta2)
         
-        pygame.draw.line(self.screen, self.RED, (int(p1_x), int(p1_y)), (int(p2_x), int(p2_y)), 6)
-        pygame.draw.circle(self.screen, self.RED, (int(p2_x), int(p2_y)), 10)
+        # Create a surface for transparency if alpha < 255
+        if alpha < 255:
+            s = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            
+            # Cart
+            cart_w = 0.6 * self.scale
+            cart_h = 0.3 * self.scale
+            cart_rect = pygame.Rect(int(cart_x - cart_w/2), int(cart_y - cart_h/2), int(cart_w), int(cart_h))
+            pygame.draw.rect(s, (*self.BLACK, alpha), cart_rect)
+            
+            # Links
+            pygame.draw.line(s, (*color_p1, alpha), (int(cart_x), int(cart_y)), (int(p1_x), int(p1_y)), 6)
+            pygame.draw.circle(s, (*color_p1, alpha), (int(p1_x), int(p1_y)), 10)
+            
+            pygame.draw.line(s, (*color_p2, alpha), (int(p1_x), int(p1_y)), (int(p2_x), int(p2_y)), 6)
+            pygame.draw.circle(s, (*color_p2, alpha), (int(p2_x), int(p2_y)), 10)
+            
+            self.screen.blit(s, (0,0))
+        else:
+            # Cart
+            cart_w = 0.6 * self.scale
+            cart_h = 0.3 * self.scale
+            cart_rect = pygame.Rect(int(cart_x - cart_w/2), int(cart_y - cart_h/2), int(cart_w), int(cart_h))
+            pygame.draw.rect(self.screen, self.BLACK, cart_rect)
+            
+            # Links
+            pygame.draw.line(self.screen, color_p1, (int(cart_x), int(cart_y)), (int(p1_x), int(p1_y)), 6)
+            pygame.draw.circle(self.screen, color_p1, (int(p1_x), int(p1_y)), 10)
+            
+            pygame.draw.line(self.screen, color_p2, (int(p1_x), int(p1_y)), (int(p2_x), int(p2_y)), 6)
+            pygame.draw.circle(self.screen, color_p2, (int(p2_x), int(p2_y)), 10)
 
-        # Visualize Theta2
-        # Vertical reference at joint 1
-        pygame.draw.line(self.screen, self.GRAY, (int(p1_x), int(p1_y)), (int(p1_x), int(p1_y + 50)), 1)
-        t2_text = self.font.render(f"q2", True, self.RED)
-        self.screen.blit(t2_text, (int(p1_x + 10), int(p1_y + 20)))
+    def render(self, state, force=0.0, external_force=0.0, episode=0, step=0, reward=0.0):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+                
+        self.draw_background()
+        self.draw_pendulum(state)
+        
+        # Force Indicators and Text (Keep existing logic but adapted)
+        ox = self.width / 2
+        oy = self.height / 2
+        cart_x = ox + state[0] * self.scale
+        cart_y = oy
         
         # Force Indicator
         if abs(force) > 0.1:
-            force_len = force * 2 # Scale for visibility
+            force_len = force * 2
             start_pos = (int(cart_x), int(cart_y))
             end_pos = (int(cart_x + force_len), int(cart_y))
             pygame.draw.line(self.screen, self.GREEN, start_pos, end_pos, 4)
-            # Arrowhead
-            
-        # External Force Indicator (Impulse/Wind)
+
+        # External Force
         if abs(external_force) > 0.1:
             ext_len = external_force * 2
-            # Draw slightly above the cart
             start_pos = (int(cart_x), int(cart_y - 30))
             end_pos = (int(cart_x + ext_len), int(cart_y - 30))
-            pygame.draw.line(self.screen, (255, 0, 255), start_pos, end_pos, 4) # Magenta
-            # Label
+            pygame.draw.line(self.screen, (255, 0, 255), start_pos, end_pos, 4)
             label = self.font.render("Ext", True, (255, 0, 255))
             self.screen.blit(label, (int(cart_x), int(cart_y - 50)))
-            
+
         # Info Text
         info_text = [
             f"Episode: {episode}",
             f"Step: {step}",
             f"Reward: {reward:.2f}",
             f"Force: {force:.2f} N",
-            f"x: {x:.2f} m",
-            f"Theta1: {theta1:.2f} rad",
-            f"Theta2: {theta2:.2f} rad"
+            f"x: {state[0]:.2f} m",
+            f"Theta1: {state[1]:.2f} rad",
+            f"Theta2: {state[2]:.2f} rad"
         ]
         
         for i, line in enumerate(info_text):
