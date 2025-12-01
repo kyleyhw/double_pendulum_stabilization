@@ -46,7 +46,11 @@ This document outlines the planned phases and tasks for developing Double Pendul
 
 ## Phase 5: Advanced Control - Multi-Equilibrium Cycling
 11. [pending] Define Equilibria.
-    - [pending] Identify stable (Down-Down) and unstable (Up-Down, Down-Up, Up-Up) fixed points.
+    - [pending] **Down-Down** (Stable, $E_{min}$).
+    - [pending] **Up-Up** (Unstable, $E_{max}$).
+    - [pending] **Down-Up** (Pole 1 Down, Pole 2 Up).
+    - [pending] **Up-Down** (Pole 1 Up, Pole 2 Down).
 12. [pending] Trajectory Planning & Control.
-    - [pending] Implement a controller (RL or Hybrid) to cycle between these states on command.
-    - [pending] Goal: Demonstrate mastery of the entire state space.
+    - [pending] Implement a goal-conditioned controller (input: Target State).
+    - [pending] Demonstrate transitions between ALL pairs (e.g., Down-Up <-> Up-Down).
+    - [pending] Mechanism: Dynamic switching of $E_{target}$ and Spatial Target in the reward function.
