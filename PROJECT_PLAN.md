@@ -31,9 +31,9 @@ This document outlines the planned phases and tasks for developing Double Pendul
 7.  [completed] Real-time Rendering.
     - [completed] Use `pygame` for smooth 2D animation.
     - [completed] Visualize forces and velocities.
-8.  [pending] Learning Progress.
-    - [pending] Save checkpoints of the agent.
-    - [pending] Create a "montage" or video showing the agent's improvement over epochs.
+8.  [in-progress] Learning Progress.
+    - [in-progress] Save checkpoints of the agent.
+    - [in-progress] Create a "montage" or video showing the agent's improvement over epochs.
     - [pending] Output: `src/utils/visualizer.py`.
 
 ## Phase 4: Robustness & Perturbations

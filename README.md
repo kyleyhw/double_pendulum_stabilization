@@ -1,79 +1,86 @@
 # Double Pendulum Stabilization with Reinforcement Learning
 
-## Objective
-To simulate a double pendulum on a movable cart and train a reinforcement learning agent to stabilize it in the upright (unstable) equilibrium position. The project emphasizes rigorous physics derivation, "from-scratch" implementation logic, and high-quality visualization of the learning process.
+## 1. Project Objective
+The goal of this project is to stabilize a **double pendulum on a cart** in the unstable upright equilibrium position ($\theta_1 = \pi, \theta_2 = \pi$) using Deep Reinforcement Learning (PPO). This system is a classic benchmark in control theory due to its high nonlinearity and chaotic dynamics.
 
-## Mathematical Overview
-The system consists of a cart (mass $M$) and two pendulum links (masses $m_1, m_2$, lengths $l_1, l_2$).
-The equations of motion are derived using Lagrangian Mechanics:
-$$ \mathcal{L} = T - V $$
-where $T$ is the kinetic energy and $V$ is the potential energy.
-The state space is $\mathbf{s} = [x, \dot{x}, \theta_1, \dot{\theta}_1, \theta_2, \dot{\theta}_2]^T$.
-The action space is the force $F$ applied to the cart.
+![Visualizer Screenshot](docs/images/visualizer_screenshot.png)
 
-## Project Structure
+## 2. Training Methodology
+We use **Proximal Policy Optimization (PPO)**, a state-of-the-art Deep Reinforcement Learning algorithm.
+
+*   **Architecture**: The agent uses a **Neural Network** (Multi-Layer Perceptron) with two heads:
+    *   **Actor (Policy)**: Outputs the mean and standard deviation of a Gaussian distribution for the action (force). This allows the agent to "explore" the state space stochastically.
+    *   **Critic (Value)**: Estimates the expected future reward from the current state, used to compute the "advantage" of an action.
+*   **Exploration**: The agent explores naturally by sampling from the policy's distribution. As training progresses, the standard deviation typically decreases, leading to more deterministic behavior.
+
+## 3. Mathematical Formulation
+
+### 3.1 System Dynamics
+The system consists of a cart of mass $M$ moving on a 1D track, with two links of mass $m_1, m_2$ and length $l_1, l_2$.
+
+**Generalized Coordinates**:
+$$ q = [x, \theta_1, \theta_2]^T $$
+where $x$ is the cart position, and $\theta_i$ are the angles from the vertical down position.
+
+**Lagrangian Mechanics**:
+The Equations of Motion (EOM) are derived from the Euler-Lagrange equation:
+$$ \frac{d}{dt} \left( \frac{\partial \mathcal{L}}{\partial \dot{q}} \right) - \frac{\partial \mathcal{L}}{\partial q} = \tau $$
+where $\mathcal{L} = T - V$.
+
+This yields the standard robotic manipulator form:
+$$ M(q)\ddot{q} + C(q, \dot{q})\dot{q} + G(q) = B u $$
+
+*   **Inertia Matrix** $M(q)$: Symmetric, positive-definite matrix encoding the mass distribution and coupling between links.
+*   **Coriolis & Centrifugal Matrix** $C(q, \dot{q})$: Contains terms like $\dot{\theta}_i^2$ and $\dot{\theta}_1 \dot{\theta}_2$.
+*   **Gravity Vector** $G(q)$: Derived from potential energy $V(\theta)$.
+*   **Control Input** $u$: The force $F$ applied to the cart.
+
+For the full derivation, see [docs/physics_derivation.md](docs/physics_derivation.md).
+
+### 3.2 State Space
+The RL agent observes the full state vector:
+$$ \mathbf{s} = [x, \sin\theta_1, \cos\theta_1, \sin\theta_2, \cos\theta_2, \dot{x}, \dot{\theta}_1, \dot{\theta}_2] $$
+*Note: We use $\sin/\cos$ of angles to avoid discontinuity at $\pm \pi$.*
+
+### 3.3 Reward Function
+The objective is to maximize the cumulative reward:
+$$ J(\pi) = \mathbb{E}_{\tau \sim \pi} \left[ \sum_{t=0}^T \gamma^t r(s_t, a_t) \right] $$
+
+The reward function $r(s, a)$ is designed to penalize deviation from the upright equilibrium:
+$$ r = - (w_1 \|\theta_1 - \pi\|^2 + w_2 \|\theta_2 - \pi\|^2 + w_3 x^2 + w_4 \|\dot{q}\|^2) + C_{alive} $$
+
+## 4. Project Structure & Separation
+The project is strictly separated into **Simulation (Physics)** and **Agent (Brain)**:
+
 ```
 double_pendulum_stabilization/
-├── docs/                   # Documentation and Math Derivations
+├── src/
+│   ├── env/                # SIMULATION (The World)
+│   │   └── double_pendulum.py  # Physics engine, EOMs, RK4 integrator.
+│   ├── agent/              # AGENT (The Brain)
+│   │   └── ppo.py              # Neural Network architecture & PPO algorithm.
+│   ├── train.py            # TRAINING (The School)
+│   │   └── ...                 # Connects Env and Agent for learning.
+│   └── simulate.py         # INFERENCE (The Test)
+│       └── ...                 # Runs the Agent in the Env without learning.
+├── docs/                   # Documentation
 │   ├── physics_derivation.md
-│   └── robustness_report.md
-├── src/                    # Source Code
-│   ├── env/                # Physics Environment
-│   │   └── double_pendulum.py
-│   ├── agent/              # RL Agent Implementation (PPO)
-│   │   └── ppo.py
-│   ├── utils/              # Visualization and Logging
-│   │   └── visualizer.py
-│   └── train.py            # Training Script
-├── tests/                  # Unit Tests
-│   ├── test_physics.py
-│   └── test_visualizer.py
-├── venv/                   # Virtual Environment (ignored by git)
-├── requirements.txt        # Python Dependencies
-├── PROJECT_PLAN.md         # Development Plan
-└── README.md               # This file
+│   └── visualization.md
+└── ...
 ```
 
-## Getting Started
-
-### Prerequisites
-*   Python 3.8+
-*   Virtual Environment (recommended)
+## 5. Usage
 
 ### Installation
-1.  **Clone the repository**:
-    ```bash
-    git clone https://github.com/kyleyhw/double_pendulum_stabilization.git
-    cd double_pendulum_stabilization
-    ```
-
-2.  **Set up Virtual Environment**:
-    ```bash
-    python -m venv venv
-    # Windows
-    venv\Scripts\activate
-    # Linux/Mac
-    source venv/bin/activate
-    ```
-
-3.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-### Usage
-
-**Run Physics Verification**:
 ```bash
-python tests/test_physics.py
+git clone https://github.com/kyleyhw/double_pendulum_stabilization.git
+cd double_pendulum_stabilization
+python -m venv venv
+# Activate venv (Windows: venv\Scripts\activate, Unix: source venv/bin/activate)
+pip install -r requirements.txt
 ```
 
-**Run Visualizer Test**:
-```bash
-python tests/test_visualizer.py
-```
-
-**Train the Agent**:
-```bash
-python src/train.py
-```
+### Running
+*   **Train**: `python src/train.py`
+*   **Visualize**: `python src/simulate.py`
+*   **Progress Montage**: `python src/visualize_progress.py`

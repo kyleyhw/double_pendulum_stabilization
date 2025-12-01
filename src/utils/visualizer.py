@@ -52,6 +52,17 @@ class Visualizer:
         cart_x = ox + x * self.scale
         cart_y = oy
         
+        # Draw Coordinate System
+        # Origin is at (ox, oy)
+        pygame.draw.line(self.screen, self.GRAY, (int(ox), 0), (int(ox), self.height), 1) # Y-axis
+        pygame.draw.line(self.screen, self.GRAY, (0, int(oy)), (self.width, int(oy)), 1) # X-axis
+        
+        # Labels
+        x_label = self.font.render("x", True, self.GRAY)
+        y_label = self.font.render("y", True, self.GRAY)
+        self.screen.blit(x_label, (self.width - 20, int(oy) + 5))
+        self.screen.blit(y_label, (int(ox) + 5, 5))
+        
         # Draw Track
         pygame.draw.line(self.screen, self.BLACK, (0, int(oy)), (self.width, int(oy)), 2)
         

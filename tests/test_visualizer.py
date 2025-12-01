@@ -2,6 +2,7 @@ import sys
 import os
 import numpy as np
 import time
+import pygame
 
 # Add src to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -31,6 +32,11 @@ def test_visualizer():
         
         state = next_state
         step += 1
+        
+        if step == 100:
+            pygame.image.save(viz.screen, "docs/images/visualizer_screenshot.png")
+            print("Screenshot saved to docs/images/visualizer_screenshot.png")
+            break
         
         if terminated or truncated:
             state, _ = env.reset()
