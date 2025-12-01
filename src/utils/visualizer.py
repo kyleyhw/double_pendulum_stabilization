@@ -167,7 +167,7 @@ class Visualizer:
             pygame.draw.circle(self.screen, color_p2, (int(p2_x), int(p2_y)), 10)
 
     def draw_reward_plot(self):
-        """Draws a rolling plot of the reward history in the bottom right corner."""
+        """Draws a rolling plot of the reward history in the top right corner."""
         if not self.reward_history:
             return
             
@@ -175,8 +175,9 @@ class Visualizer:
         plot_w = 200
         plot_h = 100
         margin = 10
+        # Top Right
         x_start = self.width - plot_w - margin
-        y_start = self.height - plot_h - margin
+        y_start = margin + 20 # Add space for title
         
         # Background
         bg_rect = pygame.Rect(x_start, y_start, plot_w, plot_h)
@@ -210,9 +211,20 @@ class Visualizer:
         if len(points) > 1:
             pygame.draw.lines(self.screen, self.BLUE, False, points, 2)
             
-        # Label
-        label = self.font.render(f"Reward (Max: {max_r:.1f})", True, self.BLACK)
-        self.screen.blit(label, (x_start, y_start - 20))
+        # Title
+        title = self.font.render(f"Reward (Max: {max_r:.1f})", True, self.BLACK)
+        self.screen.blit(title, (x_start, y_start - 20))
+        
+        # Axis Labels
+        # Y-Axis (0 and Max)
+        label_max = self.font.render(f"{max_r:.1f}", True, self.GRAY)
+        label_min = self.font.render("0.0", True, self.GRAY)
+        self.screen.blit(label_max, (x_start - 30, y_start))
+        self.screen.blit(label_min, (x_start - 30, y_start + plot_h - 10))
+        
+        # X-Axis (Time)
+        label_time = self.font.render("Time (-2s)", True, self.GRAY)
+        self.screen.blit(label_time, (x_start + plot_w - 60, y_start + plot_h + 2))
 
     def get_frame(self):
         """Returns the current screen as a numpy array (H, W, 3) in RGB."""
