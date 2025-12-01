@@ -57,11 +57,14 @@ $$
 
 ## 3. Reward Function Design
 
-The reward function is the critical signal that tells the agent what "success" looks like. We use a quadratic cost formulation (similar to LQR) transformed into a reward.
-
+The reward function is the critical signal that tells the agent what "success" looks like. We use a **Positive Gaussian Reward** formulation.
+> [!IMPORTANT]
+> **Why Positive?**
+> A previous iteration used a negative quadratic cost ($-x^2$). This led to the **"Suicide Bug"**, where the agent learned to crash the cart immediately to end the episode and avoid accumulating further negative rewards.
+> By using a positive reward $R \in (0, 1]$, staying alive is always better than crashing (which yields 0 future reward).
 
 $$
-r_t = - \left( w_{\theta_1} \tilde{\theta}_1^2 + w_{\theta_2} \tilde{\theta}_2^2 + w_x x^2 + w_{\dot{q}} \|\dot{q}\|^2 \right) + C_{alive}
+r_t = \exp \left( - \left( w_{\theta_1} \tilde{\theta}_1^2 + w_{\theta_2} \tilde{\theta}_2^2 + w_x x^2 + w_{\dot{q}} \|\dot{q}\|^2 \right) \right)
 $$
 
 
@@ -77,13 +80,16 @@ $$
     Penalizes the cart for moving away from the center of the track ($x=0$). This prevents the agent from "cheating" by running off to infinity to balance the pendulum.
 3.  **Angular Velocities ($\dot{q}$)**:
     Penalizes high velocities. Stability implies $\dot{\theta} \approx 0$.
-4.  **Alive Bonus ($C_{alive}$)**:
-    A constant positive reward (e.g., +1.0) added at every timestep the episode is not terminated. This encourages the agent to avoid failure states (cart crashing into track limits).
+    Penalizes high velocities. Stability implies $\dot{\theta} \approx 0$.
+4.  **Implicit Survival Incentive**:
+    Since $r_t > 0$ always, the agent maximizes return by keeping the episode going as long as possible.
 
 ### Weights:
 *   $w_{\theta_1} = 1.0$: High priority on the first link.
 *   $w_{\theta_2} = 1.0$: High priority on the second link.
-*   $w_x = 0.1$: Lower priority on cart position (it can move to balance, but shouldn't drift too far).
+*   $w_{\theta_1} = 1.0$: High priority on the first link.
+*   $w_{\theta_2} = 1.0$: High priority on the second link.
+*   $w_x = 0.5$: **Increased Priority** on cart position to encourage re-centering and prevent wall crashes.
 *   $w_{\dot{q}} = 0.01$: Small penalty to dampen oscillations.
 
 ## 4. Neural Network Architecture
@@ -103,7 +109,20 @@ We use a shared backbone with separate heads for the Actor and Critic (or separa
 *   **Hidden Layers**: 2 layers of 64 units with `Tanh` activation.
 *   **Output**: Scalar value $V(s_t)$ (linear activation). Estimate of discounted future return.
 
-## 5. Training Loop
+## 5. Exploration Strategy
+
+### 5.1 Zero-Mean Initialization
+We initialize the final layer of the Actor network with very small weights and zero bias.
+*   **Effect**: The initial policy $\pi(a|s)$ is a Gaussian with mean $\approx 0$.
+*   **Why**: Random initialization often leads to a non-zero mean (e.g., always pushing right). This biases exploration and can cause the agent to get stuck in a local optimum of "crashing right". Zero-mean ensures unbiased "wiggling" (Left/Right) at the start.
+
+### 5.2 Perturbative Exploration
+To ensure the agent learns to recover from disturbances, we employ:
+*   **Wind**: Continuous Gaussian noise added to the force action during training.
+*   **Impulses**: Instantaneous forces applied to the cart.
+This forces the agent to actively correct deviations rather than memorizing a single stable trajectory.
+
+## 6. Training Loop
 
 1.  **Collection Phase**: Run the agent in the environment for $N$ steps (e.g., 2048), collecting trajectories $(s_t, a_t, r_t, s_{t+1})$.
 2.  **Advantage Calculation**: Compute GAE using the collected rewards and value estimates.
