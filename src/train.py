@@ -43,6 +43,10 @@ def train():
     print(f"State Dim: {state_dim}, Action Dim: {action_dim}")
     
     # Training Loop
+    time_step = 0
+    running_reward = 0
+    avg_length = 0
+    
     try:
         for i_episode in range(1, max_episodes + 1):
             state, _ = env.reset()
