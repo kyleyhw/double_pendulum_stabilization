@@ -43,3 +43,10 @@ This document outlines the planned phases and tasks for developing Double Pendul
 10. [pending] Stress Testing.
     - [pending] Quantify the maximum recoverable angle/velocity.
     - [pending] Output: `docs/robustness_report.md`.
+
+## Phase 5: Advanced Control - Multi-Equilibrium Cycling
+11. [pending] Define Equilibria.
+    - [pending] Identify stable (Down-Down) and unstable (Up-Down, Down-Up, Up-Up) fixed points.
+12. [pending] Trajectory Planning & Control.
+    - [pending] Implement a controller (RL or Hybrid) to cycle between these states on command.
+    - [pending] Goal: Demonstrate mastery of the entire state space.
