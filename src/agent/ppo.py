@@ -19,7 +19,8 @@ class ActorCritic(nn.Module):
         )
         
         # Learnable Log Standard Deviation for continuous action
-        self.log_std = nn.Parameter(torch.zeros(action_dim))
+        # Initialize to 1.0 (std ~ 2.7) to encourage exploration
+        self.log_std = nn.Parameter(torch.ones(action_dim) * 1.0)
         
         # Critic Network (Value)
         self.critic = nn.Sequential(

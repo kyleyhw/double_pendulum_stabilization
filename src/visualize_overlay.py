@@ -14,19 +14,42 @@ from src.agent.ppo import PPOAgent
 from src.utils.visualizer import Visualizer
 
 def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=10.0, save_gif=False, output_gif="docs/images/overlay_montage.gif"):
-    # 1. Find Checkpoints
-    checkpoints = glob.glob(os.path.join(log_dir, "ppo_*_*.pth"))
-    # Filter out 'final' if we want specific steps, or include it.
-    # Let's sort by episode number.
-    # Filename format: ppo_YYYYMMDD_HHMMSS_EPISODE.pth
+    # 1. Find Checkpoints from the LATEST run
+    all_checkpoints = glob.glob(os.path.join(log_dir, "ppo_*_*.pth"))
+    if not all_checkpoints:
+        print("No checkpoints found.")
+        return
+
+    # Extract run IDs (YYYYMMDD_HHMMSS)
+    # Filename: ppo_RUNID_EPISODE.pth
+    run_ids = set()
+    for f in all_checkpoints:
+        parts = os.path.basename(f).split('_')
+        if len(parts) >= 3:
+            run_id = f"{parts[1]}_{parts[2]}"
+            run_ids.add(run_id)
+    
+    if not run_ids:
+        print("No valid run IDs found.")
+        return
+
+    # Sort run IDs to find latest
+    latest_run_id = sorted(list(run_ids))[-1]
+    print(f"Using checkpoints from latest run: {latest_run_id}")
+    
+    checkpoints = [f for f in all_checkpoints if latest_run_id in f]
     
     def get_episode(f):
         try:
             return int(f.split('_')[-1].split('.')[0])
         except:
-            return 999999 # Final
+            return "Final" # Return string "Final" for display sorting/labeling logic needs update
 
-    checkpoints.sort(key=get_episode)
+    def get_sort_key(f):
+        ep = get_episode(f)
+        return 999999999 if ep == "Final" else ep
+
+    checkpoints.sort(key=get_sort_key)
     
     if len(checkpoints) == 0:
         print("No checkpoints found.")
