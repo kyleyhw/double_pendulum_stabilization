@@ -120,10 +120,10 @@ pip install -r requirements.txt
 To see the agent's improvement over time (requires multiple checkpoints in `logs/`):
 ```bash
 # View on screen
-python src/visualize_progress.py
+# View Overlay Montage (Ghost Effect)
+python src/visualize_overlay.py
 
-# Save as GIF
-python src/visualize_progress.py --save_gif --output docs/images/training_montage.gif
+# The GIF is saved to docs/images/overlay_montage.gif by default.
 ```
 
 ### Robustness Testing
