@@ -126,6 +126,7 @@ This forces the agent to actively correct deviations rather than memorizing a si
 ## 6. Training Loop
 
 1.  **Collection Phase**: Run the agent in the environment for $N$ steps (e.g., 2048), collecting trajectories $(s_t, a_t, r_t, s_{t+1})$.
+    *   **Metric**: We track "Lifetime" (steps survived) as a key indicator of stability. A lifetime of 2000 steps (40s) indicates a successful episode.
 2.  **Advantage Calculation**: Compute GAE using the collected rewards and value estimates.
 3.  **Update Phase**:
     *   Shuffle the collected data.
