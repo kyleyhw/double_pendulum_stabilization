@@ -21,6 +21,10 @@ We model the double pendulum stabilization as a **Markov Decision Process (MDP)*
 *   **Dynamics ($P$)**: Deterministic physics governed by the Lagrangian equations of motion (see `physics_derivation.md`).
 *   **Reward Function ($R$)**: Dense, shaped reward to guide the agent towards the unstable equilibrium.
 *   **Discount Factor ($\gamma$)**: $0.99$, encouraging long-term stability.
+*   **Simulation Parameters**:
+    *   Timestep ($dt$): $0.02$ s
+    *   Max Force ($F_{max}$): $20.0$ N
+    *   Max Episode Length: $2000$ steps ($40$ s)
 
 ## 2. Proximal Policy Optimization (PPO)
 

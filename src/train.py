@@ -93,7 +93,10 @@ def train():
             if i_episode % log_interval == 0:
                 avg_reward = running_reward / log_interval
                 avg_len = avg_length / log_interval
-                print(f"Episode {i_episode} \t Avg Reward: {avg_reward:.2f} \t Avg Length: {avg_len:.2f}")
+                # Renamed 'Avg Length' to 'Avg Lifetime' per user request
+                # dt = 0.02s
+                avg_lifetime_sec = avg_len * 0.02
+                print(f"Episode {i_episode} \t Avg Reward: {avg_reward:.2f} \t Avg Lifetime: {avg_len:.2f} steps ({avg_lifetime_sec:.2f} s)")
                 running_reward = 0
                 avg_length = 0
                 

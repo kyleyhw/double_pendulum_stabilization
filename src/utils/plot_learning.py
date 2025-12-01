@@ -20,24 +20,35 @@ def plot_learning_curve(log_dir="logs", output_file="docs/images/learning_curve.
     # Plot
     plt.figure(figsize=(10, 6))
     
-    # Plot Negative Reward (Cost) for Log Scale
-    # Since rewards are negative (stabilization task), we plot -Reward to see the cost decrease.
-    neg_reward = -df['reward']
+    # Plot Reward (Positive)
+    rewards = df['reward']
     
     # Raw
-    plt.plot(df['episode'], neg_reward, label='Episode Cost (-Reward)', alpha=0.3, color='blue')
+    plt.plot(df['episode'], rewards, label='Episode Reward', alpha=0.3, color='blue')
     
     # Moving Average
     window_size = 50
-    rolling_mean = neg_reward.rolling(window=window_size).mean()
+    rolling_mean = rewards.rolling(window=window_size).mean()
     plt.plot(df['episode'], rolling_mean, label=f'Moving Avg ({window_size})', color='red', linewidth=2)
     
     plt.xlabel('Episode')
-    plt.ylabel('Cost (Negative Reward)')
-    plt.yscale('log')
-    plt.title('Training Progress: Double Pendulum Stabilization (Log Scale)')
-    plt.legend()
+    plt.ylabel('Reward')
+    # plt.yscale('log') # No longer needed for positive rewards
+    plt.title('Training Progress: Double Pendulum Stabilization')
+    plt.legend(loc='upper left')
     plt.grid(True, which="both", ls="-", alpha=0.2)
+    
+    # Add Parameters Text
+    params_text = (
+        "Parameters:\n"
+        "dt = 0.02 s\n"
+        "Max Force = 20 N\n"
+        "Max Steps = 2000\n"
+        "Reward: Gaussian"
+    )
+    plt.text(0.95, 0.05, params_text, transform=plt.gca().transAxes, 
+             fontsize=10, verticalalignment='bottom', horizontalalignment='right',
+             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
     
     # Save
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
