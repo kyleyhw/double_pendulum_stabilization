@@ -9,7 +9,7 @@ def train():
     # Hyperparameters
     env_name = "DoublePendulumCart-v0"
     max_episodes = 5000        # Max training episodes
-    max_timesteps = 1000       # Max timesteps per episode
+    max_timesteps = 2000       # Max timesteps per episode (Increased for Swing-Up)
     update_timestep = 2000     # Update policy every n timesteps
     lr = 0.0003
     gamma = 0.99
@@ -21,7 +21,8 @@ def train():
     save_interval = 200        # Save model every n episodes
     
     # Create Env
-    env = DoublePendulumCartEnv()
+    # Swing-Up Task: Start "down", no wind for now.
+    env = DoublePendulumCartEnv(reset_mode="down", wind_std=0.0)
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
     

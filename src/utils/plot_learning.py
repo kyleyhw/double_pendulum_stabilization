@@ -20,19 +20,24 @@ def plot_learning_curve(log_dir="logs", output_file="docs/images/learning_curve.
     # Plot
     plt.figure(figsize=(10, 6))
     
-    # Raw Reward
-    plt.plot(df['episode'], df['reward'], label='Episode Reward', alpha=0.3, color='blue')
+    # Plot Negative Reward (Cost) for Log Scale
+    # Since rewards are negative (stabilization task), we plot -Reward to see the cost decrease.
+    neg_reward = -df['reward']
+    
+    # Raw
+    plt.plot(df['episode'], neg_reward, label='Episode Cost (-Reward)', alpha=0.3, color='blue')
     
     # Moving Average
     window_size = 50
-    rolling_mean = df['reward'].rolling(window=window_size).mean()
+    rolling_mean = neg_reward.rolling(window=window_size).mean()
     plt.plot(df['episode'], rolling_mean, label=f'Moving Avg ({window_size})', color='red', linewidth=2)
     
     plt.xlabel('Episode')
-    plt.ylabel('Reward')
-    plt.title('Training Progress: Double Pendulum Stabilization')
+    plt.ylabel('Cost (Negative Reward)')
+    plt.yscale('log')
+    plt.title('Training Progress: Double Pendulum Stabilization (Log Scale)')
     plt.legend()
-    plt.grid(True, alpha=0.3)
+    plt.grid(True, which="both", ls="-", alpha=0.2)
     
     # Save
     os.makedirs(os.path.dirname(output_file), exist_ok=True)

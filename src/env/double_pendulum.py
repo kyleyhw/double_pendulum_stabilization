@@ -21,7 +21,7 @@ class DoublePendulumCartEnv(gym.Env):
     
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
-    def __init__(self, render_mode: Optional[str] = None, wind_std: float = 0.0):
+    def __init__(self, render_mode: Optional[str] = None, wind_std: float = 0.0, reset_mode: str = "up"):
         super().__init__()
         
         # System Parameters
@@ -35,6 +35,7 @@ class DoublePendulumCartEnv(gym.Env):
         self.dt = 0.02    # Time step [s]
         self.force_mag = 20.0 # Max force magnitude
         self.wind_std = wind_std # Standard deviation of wind force noise
+        self.reset_mode = reset_mode # "up" or "down"
         self.current_impulse = 0.0 # Instantaneous impulse force
         
         # Action Space: Continuous force [-F_max, F_max]
@@ -71,8 +72,15 @@ class DoublePendulumCartEnv(gym.Env):
         # Start near Upright: theta1 ~ pi, theta2 ~ pi
         
         self.state = self.np_random.uniform(low=-0.05, high=0.05, size=(6,))
-        self.state[1] += np.pi # theta1 near pi
-        self.state[2] += np.pi # theta2 near pi
+        
+        if self.reset_mode == "up":
+            self.state[1] += np.pi # theta1 near pi
+            self.state[2] += np.pi # theta2 near pi
+        elif self.reset_mode == "down":
+            # Start near 0 (down)
+            pass
+        else:
+            raise ValueError(f"Unknown reset_mode: {self.reset_mode}")
         
         return self._get_obs(), {}
 
@@ -123,17 +131,23 @@ class DoublePendulumCartEnv(gym.Env):
         t2_err = angle_normalize(theta2 - np.pi)
         
         # Weights
-        w1, w2, w3, w4 = 1.0, 1.0, 0.1, 0.01
+        # Weights
+        # w3 (position) increased to 0.5 to encourage re-centering
+        w1, w2, w3, w4 = 1.0, 1.0, 0.5, 0.01
         
-        reward = -(
+        # Gaussian Reward (Positive)
+        # R = exp(-distance^2)
+        # This ensures reward is in [0, 1].
+        # Staying alive (even at bottom) gives small positive reward > 0 (crash).
+        
+        dist_sq = (
             w1 * t1_err**2 + 
             w2 * t2_err**2 + 
             w3 * x**2 + 
             w4 * (theta1_dot**2 + theta2_dot**2)
         )
         
-        # Bonus for staying alive (not crashing cart)
-        reward += 1.0
+        reward = np.exp(-dist_sq)
 
  
         

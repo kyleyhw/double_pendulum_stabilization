@@ -18,6 +18,19 @@ class ActorCritic(nn.Module):
             nn.Linear(hidden_dim, action_dim)
         )
         
+        # Initialize weights to ensure small initial outputs (zero-mean policy)
+        def init_weights(m):
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, gain=np.sqrt(2))
+                nn.init.constant_(m.bias, 0)
+        
+        self.actor.apply(init_weights)
+        
+        # Make the final layer weights very small to start with 0 mean
+        # Access the last Linear layer (index 4)
+        nn.init.constant_(self.actor[4].weight, 0.01)
+        nn.init.constant_(self.actor[4].bias, 0)
+        
         # Learnable Log Standard Deviation for continuous action
         # Initialize to 1.0 (std ~ 2.7) to encourage exploration
         self.log_std = nn.Parameter(torch.ones(action_dim) * 1.0)

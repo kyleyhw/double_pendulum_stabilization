@@ -48,7 +48,7 @@ def run_simulation(model_path=None, duration=20.0, wind_std=0.0):
     print("  Close window to exit.")
     
     try:
-        while time.time() - start_time < duration:
+        while duration <= 0 or (time.time() - start_time < duration):
             # Select Action
             if agent:
                 action, _ = agent.select_action(state)
@@ -92,7 +92,7 @@ def run_simulation(model_path=None, duration=20.0, wind_std=0.0):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Double Pendulum Simulation")
     parser.add_argument("--model", type=str, help="Path to trained model checkpoint (.pth)")
-    parser.add_argument("--duration", type=float, default=30.0, help="Duration in seconds")
+    parser.add_argument("--duration", type=float, default=0.0, help="Duration in seconds (0 for infinite)")
     
     parser.add_argument("--wind", type=float, default=0.0, help="Standard deviation of wind force")
     
