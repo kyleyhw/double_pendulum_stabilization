@@ -43,63 +43,68 @@ def train():
     print(f"State Dim: {state_dim}, Action Dim: {action_dim}")
     
     # Training Loop
-    time_step = 0
-    running_reward = 0
-    avg_length = 0
-    
-    for i_episode in range(1, max_episodes + 1):
-        state, _ = env.reset()
-        current_ep_reward = 0
-        
-        for t in range(max_timesteps):
-            time_step += 1
+    try:
+        for i_episode in range(1, max_episodes + 1):
+            state, _ = env.reset()
+            current_ep_reward = 0
             
-            # Select Action
-            action, log_prob = ppo.select_action(state)
+            for t in range(max_timesteps):
+                time_step += 1
+                
+                # Select Action
+                action, log_prob = ppo.select_action(state)
+                
+                # Step Env
+                next_state, reward, terminated, truncated, _ = env.step(action)
+                done = terminated or truncated
+                
+                # Save to memory
+                memory.states.append(state)
+                memory.actions.append(action)
+                memory.log_probs.append(log_prob)
+                memory.rewards.append(reward)
+                memory.is_terminals.append(done)
+                
+                state = next_state
+                current_ep_reward += reward
+                
+                # Update PPO
+                if time_step % update_timestep == 0:
+                    ppo.update(memory)
+                    memory.clear()
+                    time_step = 0
+                
+                if done:
+                    break
             
-            # Step Env
-            next_state, reward, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
+            running_reward += current_ep_reward
+            avg_length += t
             
-            # Save to memory
-            memory.states.append(state)
-            memory.actions.append(action)
-            memory.log_probs.append(log_prob)
-            memory.rewards.append(reward)
-            memory.is_terminals.append(done)
+            # Log to CSV
+            with open(log_file, "a") as f:
+                f.write(f"{i_episode},{current_ep_reward},{t}\n")
             
-            state = next_state
-            current_ep_reward += reward
-            
-            # Update PPO
-            if time_step % update_timestep == 0:
-                ppo.update(memory)
-                memory.clear()
-                time_step = 0
-            
-            if done:
-                break
-        
-        running_reward += current_ep_reward
-        avg_length += t
-        
-        # Log to CSV
-        with open(log_file, "a") as f:
-            f.write(f"{i_episode},{current_ep_reward},{t}\n")
-        
-        # Logging
-        if i_episode % log_interval == 0:
-            avg_reward = running_reward / log_interval
-            avg_len = avg_length / log_interval
-            print(f"Episode {i_episode} \t Avg Reward: {avg_reward:.2f} \t Avg Length: {avg_len:.2f}")
-            running_reward = 0
-            avg_length = 0
-            
-        # Save Model
-        if i_episode % save_interval == 0:
-            save_path = os.path.join(log_dir, f"ppo_{run_name}_{i_episode}.pth")
-            ppo.save(save_path)
-            print(f"Model saved to {save_path}")
+            # Logging
+            if i_episode % log_interval == 0:
+                avg_reward = running_reward / log_interval
+                avg_len = avg_length / log_interval
+                print(f"Episode {i_episode} \t Avg Reward: {avg_reward:.2f} \t Avg Length: {avg_len:.2f}")
+                running_reward = 0
+                avg_length = 0
+                
+            # Save Model
+            if i_episode % save_interval == 0:
+                save_path = os.path.join(log_dir, f"ppo_{run_name}_{i_episode}.pth")
+                ppo.save(save_path)
+                print(f"Model saved to {save_path}")
+
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user.")
+    finally:
+        save_path = os.path.join(log_dir, f"ppo_{run_name}_final.pth")
+        ppo.save(save_path)
+        print(f"Final model saved to {save_path}")
+        print("Training complete.")
 
 if __name__ == '__main__':
     train()
