@@ -85,6 +85,9 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=10.0, save_mp4
         agent.policy.eval()
         agents.append(agent)
 
+    # Reward Histories
+    reward_histories = [[] for _ in range(len(agents))]
+
     # Colors: Fade from Red (early) to Green (late)
     import matplotlib.pyplot as plt
     cmap = plt.get_cmap('viridis') # Blue to Green/Yellow
@@ -116,8 +119,13 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=10.0, save_mp4
             # Update all agents
             for i in range(len(agents)):
                 action, _ = agents[i].select_action(states[i])
-                next_state, _, terminated, truncated, _ = envs[i].step(action)
+                next_state, reward, terminated, truncated, _ = envs[i].step(action)
                 states[i] = next_state
+                
+                # Track Reward History
+                reward_histories[i].append(reward)
+                if len(reward_histories[i]) > 100:
+                    reward_histories[i].pop(0)
                 
                 if terminated or truncated:
                     states[i], _ = envs[i].reset(seed=42) # Reset to same start
@@ -133,6 +141,9 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=10.0, save_mp4
                 
                 color = pygame_colors[i]
                 viz.draw_pendulum(state, color_p1=color, color_p2=color, alpha=alpha)
+
+            # Draw Multi-Line Reward Plot
+            viz.draw_reward_plot(histories=reward_histories, colors=pygame_colors)
 
             # Draw Legend with Background
             legend_x = 10

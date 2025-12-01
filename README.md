@@ -54,7 +54,13 @@ $$
 
 For the full derivation, see [docs/physics_derivation.md](docs/physics_derivation.md).
 
-### 3.2 State Space
+### 3.2 Controllability Analysis
+Before training, we mathematically verified that the unstable equilibria (Up-Up, Down-Up, Up-Down) are **controllable**.
+Using the Kalman Rank Condition on the linearized dynamics, we proved that the system is fully controllable ($\text{rank}(\mathcal{C}) = 6$) despite being underactuated.
+
+See the full proof and analysis in [docs/controllability_analysis.md](docs/controllability_analysis.md).
+
+### 3.3 State Space
 The RL agent observes the full state vector:
 
 $$
@@ -63,23 +69,18 @@ $$
 
 *Note: We use $\sin/\cos$ of angles to avoid discontinuity at $\pm \pi$.*
 
-### 3.3 Reward Function
-The objective is to maximize the cumulative reward:
+### 3.4 Reward Function (Hybrid Physical Reward)
+The reward function is a weighted sum of three physical components:
 
 $$
-J(\pi) = \mathbb{E}_{\tau \sim \pi} \left[ \sum_{t=0}^T \gamma^t r(s_t, a_t) \right]
+R_{total} = w_{spatial} R_{spatial} + w_{energy} R_{energy} + w_{kinetic} R_{kinetic}
 $$
 
+1.  **Spatial Reward ($R_{spatial}$)**: Gaussian penalty on position and angle errors. Encourages the agent to be in the correct configuration.
+2.  **Energy Reward ($R_{energy}$)**: Penalizes deviation from the target total energy ($E_{target}$). Encourages the agent to pump/dissipate energy to reach the correct manifold.
+3.  **Kinetic Damping ($R_{kinetic}$)**: Penalizes kinetic energy ($T$) when near the target. Forces the agent to stabilize (stop moving) once it reaches the upright position.
 
-The reward function $r(s, a)$ is designed to penalize deviation from the upright equilibrium:
-
-$$
-r = \exp \left( - (w_1 \theta_{1,err}^2 + w_2 \theta_{2,err}^2 + w_3 x^2 + w_4 \|\dot{q}\|^2) \right)
-$$
-
-*   **Rewarded ($r \to 1.0$)**: Perfectly upright ($\theta = \pi$), centered ($x=0$), and stationary.
-*   **Penalized ($r \to 0.0$)**: Deviating from the target state.
-*   **Neutral/Survival**: Staying alive (even at the bottom) yields a small positive reward ($>0$), which is strictly better than crashing (reward $0$), preventing the "suicide bug" where the agent crashes intentionally to avoid negative penalties.
+This "Physical Reward" structure guides the agent through the energy landscape rather than just minimizing geometric error.
 
 
 ## 4. Project Structure & Separation

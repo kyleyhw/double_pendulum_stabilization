@@ -86,7 +86,7 @@ def run_simulation(model_path=None, duration=20.0, wind_std=0.0, save_mp4=False,
             done = terminated or truncated
             
             # Render
-            viz.render(state, force=action[0], episode=1, step=step, reward=reward)
+            viz.render(state, force=action[0], episode="Final", step=step, reward=reward)
             
             # Capture Frame
             if save_mp4 and video_writer is not None:

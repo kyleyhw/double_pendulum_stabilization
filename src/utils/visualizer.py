@@ -1,6 +1,8 @@
 import pygame
 import numpy as np
 import sys
+import time
+from datetime import datetime
 
 class Visualizer:
     def __init__(self, env):
@@ -67,24 +69,30 @@ class Visualizer:
 
         # Draw Reward Plot
         self.draw_reward_plot()
-
-        # Info Text
-        info_text = [
-            f"Episode: {episode}",
-            f"Step: {step}",
-            f"Reward: {reward:.2f}",
-            f"Force: {force:.2f} N",
-            f"x: {state[0]:.2f} m",
-            f"Theta1: {state[1]:.2f} rad",
-            f"Theta2: {state[2]:.2f} rad"
-        ]
         
-        for i, line in enumerate(info_text):
-            text_surf = self.font.render(line, True, self.BLACK)
-            self.screen.blit(text_surf, (10, 10 + i * 20))
-            
-        pygame.display.flip()
-        self.clock.tick(60)
+        # Center of screen is (width/2, height/2)
+        ox = self.width / 2
+        oy = self.height / 2
+        
+        # Draw Coordinate System (Cartesian)
+        for i in range(-5, 6):
+            gx = int(ox + i * self.scale)
+            pygame.draw.line(self.screen, (240, 240, 240), (gx, 0), (gx, self.height), 1)
+            gy = int(oy + i * self.scale)
+            pygame.draw.line(self.screen, (240, 240, 240), (0, gy), (self.width, gy), 1)
+
+        # Main Axes
+        pygame.draw.line(self.screen, self.GRAY, (int(ox), 0), (int(ox), self.height), 1)
+        pygame.draw.line(self.screen, self.GRAY, (0, int(oy)), (self.width, int(oy)), 1)
+        
+        # Labels
+        x_label = self.font.render("x (m)", True, self.GRAY)
+        y_label = self.font.render("y (m)", True, self.GRAY)
+        self.screen.blit(x_label, (self.width - 40, int(oy) + 5))
+        self.screen.blit(y_label, (int(ox) + 5, 5))
+        
+        # Draw Track
+        pygame.draw.line(self.screen, self.BLACK, (0, int(oy)), (self.width, int(oy)), 2)
 
     def draw_background(self):
         self.screen.fill(self.WHITE)
@@ -166,9 +174,20 @@ class Visualizer:
             pygame.draw.line(self.screen, color_p2, (int(p1_x), int(p1_y)), (int(p2_x), int(p2_y)), 6)
             pygame.draw.circle(self.screen, color_p2, (int(p2_x), int(p2_y)), 10)
 
-    def draw_reward_plot(self):
-        """Draws a rolling plot of the reward history in the top right corner."""
-        if not self.reward_history:
+    def draw_reward_plot(self, histories=None, colors=None):
+        """
+        Draws a rolling plot of reward history.
+        Args:
+            histories: List of lists of reward values. If None, uses [self.reward_history].
+            colors: List of colors for each history. If None, uses [self.BLUE].
+        """
+        if histories is None:
+            if not self.reward_history:
+                return
+            histories = [self.reward_history]
+            colors = [self.BLUE]
+            
+        if not histories or not histories[0]:
             return
             
         # Plot Dimensions
@@ -184,45 +203,45 @@ class Visualizer:
         pygame.draw.rect(self.screen, (240, 240, 240), bg_rect)
         pygame.draw.rect(self.screen, self.GRAY, bg_rect, 1) # Border
         
-        # Normalize Data
-        # We want to see dynamics, so auto-scale, but keep 0 as min if possible
-        max_r = max(self.reward_history)
-        if max_r < 1.0: max_r = 1.0 # Keep scale reasonable
-        min_r = 0.0
+        # Determine Scale (Global max across all histories)
+        all_values = [r for h in histories for r in h]
+        if not all_values: return
         
-        points = []
-        for i, r in enumerate(self.reward_history):
-            # x coordinate
-            # We want the plot to scroll.
-            # If len < max_history, fill from left.
-            # If len == max_history, it's a full window.
+        max_r = max(all_values)
+        if max_r < 1.0: max_r = 1.0
+        min_r = 0.0 # Keep 0 as baseline
+        
+        # Draw each history
+        for idx, history in enumerate(histories):
+            color = colors[idx] if colors and idx < len(colors) else self.BLUE
             
-            px = x_start + (i / (self.max_history - 1)) * plot_w if self.max_history > 1 else x_start
-            
-            # y coordinate (inverted because screen y is down)
-            if max_r > min_r:
-                norm_r = (r - min_r) / (max_r - min_r)
-            else:
-                norm_r = 0
-            
-            py = y_start + plot_h - (norm_r * plot_h)
-            points.append((px, py))
-            
-        if len(points) > 1:
-            pygame.draw.lines(self.screen, self.BLUE, False, points, 2)
+            points = []
+            for i, r in enumerate(history):
+                # x coordinate
+                px = x_start + (i / (self.max_history - 1)) * plot_w if self.max_history > 1 else x_start
+                
+                # y coordinate
+                if max_r > min_r:
+                    norm_r = (r - min_r) / (max_r - min_r)
+                else:
+                    norm_r = 0
+                
+                py = y_start + plot_h - (norm_r * plot_h)
+                points.append((px, py))
+                
+            if len(points) > 1:
+                pygame.draw.lines(self.screen, color, False, points, 2)
             
         # Title
         title = self.font.render(f"Reward (Max: {max_r:.1f})", True, self.BLACK)
         self.screen.blit(title, (x_start, y_start - 20))
         
         # Axis Labels
-        # Y-Axis (0 and Max)
         label_max = self.font.render(f"{max_r:.1f}", True, self.GRAY)
         label_min = self.font.render("0.0", True, self.GRAY)
         self.screen.blit(label_max, (x_start - 30, y_start))
         self.screen.blit(label_min, (x_start - 30, y_start + plot_h - 10))
         
-        # X-Axis (Time)
         label_time = self.font.render("Time (-2s)", True, self.GRAY)
         self.screen.blit(label_time, (x_start + plot_w - 60, y_start + plot_h + 2))
 

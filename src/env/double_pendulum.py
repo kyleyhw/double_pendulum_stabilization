@@ -57,7 +57,21 @@ class DoublePendulumCartEnv(gym.Env):
         self.observation_space = spaces.Box(-high, high, dtype=np.float32)
         
         self.render_mode = render_mode
+        self.render_mode = render_mode
         self.state = None
+        
+        # Curriculum Learning Parameters
+        # alpha: 0.0 (Easy/Wide) -> 1.0 (Hard/Precise)
+        self.curriculum_alpha = 0.0
+        self.sigma_target = 1.0 # The final desired sigma (standard deviation)
+        self.sigma_start = 5.0  # The starting sigma (5x wider)
+
+    def set_curriculum(self, alpha: float):
+        """
+        Updates the curriculum factor alpha [0, 1].
+        Scales the reward basin width (sigma).
+        """
+        self.curriculum_alpha = np.clip(alpha, 0.0, 1.0)
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
         super().reset(seed=seed)
@@ -131,21 +145,29 @@ class DoublePendulumCartEnv(gym.Env):
         t2_err = angle_normalize(theta2 - np.pi)
         
         # Weights
-        # Weights
         # w3 (position) increased to 0.5 to encourage re-centering
-        w1, w2, w3, w4 = 1.0, 1.0, 0.5, 0.01
+        # w4 (velocity) increased to 0.1 to discourage flailing/spinning
+        w1, w2, w3, w4 = 1.0, 1.0, 0.5, 0.1
         
         # Gaussian Reward (Positive)
         # R = exp(-distance^2)
         
+        # Calculate current sigma based on curriculum
+        # Linear interpolation: Wide -> Narrow
+        current_sigma = (1.0 - self.curriculum_alpha) * self.sigma_start + self.curriculum_alpha * self.sigma_target
+        
         # 1. Spatial Reward (Alignment)
+        # We divide the squared error by sigma^2 effectively.
+        # Original: exp(-dist_sq). This implies sigma=1.
+        # New: exp(-dist_sq / sigma^2).
+        
         dist_sq = (
             w1 * t1_err**2 + 
             w2 * t2_err**2 + 
             w3 * x**2 + 
             w4 * (theta1_dot**2 + theta2_dot**2)
         )
-        r_spatial = np.exp(-dist_sq)
+        r_spatial = np.exp(-dist_sq / (current_sigma**2))
         
         # 2. Energy Reward (Shaping)
         # Target Energy (Up-Up Equilibrium: theta1=pi, theta2=pi, velocities=0)
@@ -160,15 +182,49 @@ class DoublePendulumCartEnv(gym.Env):
         # We want the kernel width to be reasonable.
         # If diff is 10J, exp(-10) is tiny.
         # Let's normalize or scale sigma.
-        # sigma_e = 10.0
-        r_energy = np.exp(-energy_diff / 10.0)
+        # sigma_e = 10.0. Let's also relax this with curriculum?
+        # Yes, wide energy basin helps finding the manifold.
+        energy_sigma = 10.0 * current_sigma
+        r_energy = np.exp(-energy_diff / energy_sigma)
+        
+        # 3. Kinetic Damping Reward (Stability)
+        # Minimize Kinetic Energy T to force V -> E_target (Upright)
+        # CRITICAL: Only apply this when NEAR the target (Upright).
+        # Otherwise, we punish the high velocity needed for swing-up.
+        
+        # Recalculate V to get T
+        c1 = np.cos(theta1)
+        c2 = np.cos(theta2)
+        V = -(self.m1 + self.m2) * self.g * self.l1 * c1 - self.m2 * self.g * self.l2 * c2
+        T = current_energy - V
+        
+        # Base Kinetic Reward (Dual-Gaussian)
+        # 1. Wide Basin (sigma=10.0): Provides gradient from far away (high velocity).
+        # 2. Narrow Tip (sigma=1.0): Provides precision at the goal (stillness).
+        # Scale these sigmas by curriculum too.
+        
+        r_kinetic_wide = np.exp(-T / (10.0 * current_sigma))
+        r_kinetic_narrow = np.exp(-T / (1.0 * current_sigma))
+        
+        r_kinetic_raw = 0.2 * r_kinetic_wide + 0.8 * r_kinetic_narrow
+        
+        # Gating Factor: How close are we to Upright?
+        # Use simple angle distance (without velocity)
+        pos_dist_sq = t1_err**2 + t2_err**2
+        # Gate should also widen? 
+        # If gate is too narrow, we never get kinetic reward even if we are "roughly" up.
+        gating = np.exp(-pos_dist_sq / (current_sigma**2)) 
+        
+        r_kinetic = r_kinetic_raw * gating
         
         # Combined Reward
-        # Hybrid: w_spatial * r_spatial + w_energy * r_energy
-        w_spatial = 0.6
-        w_energy = 0.4
+        # Hybrid: w_spatial * r_spatial + w_energy * r_energy + w_kinetic * r_kinetic
+        # Now that Kinetic is gated, we can increase its weight to be very strong at the top.
+        w_spatial = 0.4
+        w_energy = 0.3
+        w_kinetic = 0.3
         
-        reward = w_spatial * r_spatial + w_energy * r_energy
+        reward = w_spatial * r_spatial + w_energy * r_energy + w_kinetic * r_kinetic
 
  
         

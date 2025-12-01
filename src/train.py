@@ -5,10 +5,11 @@ from agent.ppo import PPOAgent, Memory
 import os
 from datetime import datetime
 
-def train():
+import argparse
+
+def train(load_model=None, max_episodes=5000):
     # Hyperparameters
     env_name = "DoublePendulumCart-v0"
-    max_episodes = 5000        # Max training episodes
     max_timesteps = 2000       # Max timesteps per episode (Increased for Swing-Up)
     update_timestep = 2000     # Update policy every n timesteps
     lr = 0.0003
@@ -28,6 +29,11 @@ def train():
     
     # Create Agent
     ppo = PPOAgent(state_dim, action_dim, lr, gamma, eps_clip, k_epochs)
+    
+    if load_model:
+        print(f"Loading model from {load_model}...")
+        ppo.load(load_model)
+        
     memory = Memory()
     
     # Logging Setup
@@ -49,7 +55,20 @@ def train():
     avg_length = 0
     
     try:
+        # Curriculum Schedule
+        # Anneal alpha from 0.0 to 1.0 over 'curriculum_episodes'
+        curriculum_episodes = 3000
+        
         for i_episode in range(1, max_episodes + 1):
+            # Calculate alpha
+            if i_episode <= curriculum_episodes:
+                alpha = (i_episode - 1) / curriculum_episodes
+            else:
+                alpha = 1.0
+                
+            # Set Curriculum
+            env.set_curriculum(alpha)
+            
             state, _ = env.reset()
             current_ep_reward = 0
             
@@ -96,7 +115,7 @@ def train():
                 # Renamed 'Avg Length' to 'Avg Lifetime' per user request
                 # dt = 0.02s
                 avg_lifetime_sec = avg_len * 0.02
-                print(f"Episode {i_episode} \t Avg Reward: {avg_reward:.2f} \t Avg Lifetime: {avg_len:.2f} steps ({avg_lifetime_sec:.2f} s)")
+                print(f"Episode {i_episode} \t Alpha: {alpha:.2f} \t Avg Reward: {avg_reward:.2f} \t Avg Lifetime: {avg_len:.2f} steps ({avg_lifetime_sec:.2f} s)")
                 running_reward = 0
                 avg_length = 0
                 
@@ -115,4 +134,9 @@ def train():
         print("Training complete.")
 
 if __name__ == '__main__':
-    train()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--load", type=str, help="Path to model to load")
+    parser.add_argument("--episodes", type=int, default=5000, help="Number of episodes to train")
+    args = parser.parse_args()
+    
+    train(load_model=args.load, max_episodes=args.episodes)

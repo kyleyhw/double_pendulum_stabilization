@@ -21,19 +21,6 @@ This document outlines the planned phases and tasks for developing Double Pendul
     - [completed] Algorithm: Proximal Policy Optimization (PPO) or Soft Actor-Critic (SAC).
     - [completed] Library: `stable-baselines3` (as a baseline) or custom implementation.
 5.  [completed] Reward Function Engineering.
-    - [completed] Design reward $R$ to maximize upright time and minimize cart displacement.
-    - [completed] $R = \exp(-(w_1 \theta_1^2 + w_2 \theta_2^2 + w_3 x^2 + w_4 \dot{q}^T \dot{q}))$.
-6.  [completed] Training Loop.
-    - [completed] Implement the interaction loop.
-    - [completed] Logging of metrics (reward, episode length).
-
-## Phase 3: Visualization & Analysis
-7.  [completed] Real-time Rendering.
-    - [completed] Use `pygame` for smooth 2D animation.
-    - [completed] Visualize forces and velocities.
-8.  [completed] Learning Progress.
-    - [completed] Save checkpoints of the agent.
-    - [completed] Create a "montage" or video showing the agent's improvement over epochs.
     - [completed] Output: `src/utils/visualizer.py`.
 
 ## Phase 4: Robustness & Perturbations
