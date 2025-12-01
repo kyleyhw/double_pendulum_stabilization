@@ -14,13 +14,15 @@ from src.env.double_pendulum import DoublePendulumCartEnv
 from src.agent.ppo import PPOAgent
 from src.utils.visualizer import Visualizer
 
-def run_simulation(model_path=None, duration=20.0, wind_std=0.0):
+def run_simulation(model_path=None, duration=20.0, wind_std=0.0, save_gif=False, output_gif="docs/images/final_run.gif"):
     """
     Runs the simulation loop with visualization.
     
     Args:
         model_path (str): Path to a saved PPO checkpoint. If None, uses random actions.
         duration (float): Duration to run in seconds.
+        save_gif (bool): Whether to save the run as a GIF.
+        output_gif (str): Path to save the GIF.
     """
     env = DoublePendulumCartEnv(wind_std=wind_std)
     viz = Visualizer(env)
@@ -40,12 +42,15 @@ def run_simulation(model_path=None, duration=20.0, wind_std=0.0):
     state, _ = env.reset()
     step = 0
     start_time = time.time()
+    frames = []
     
     print("Starting simulation...")
     print("Controls:")
     print("  LEFT ARROW : Apply force Left")
     print("  RIGHT ARROW: Apply force Right")
     print("  Close window to exit.")
+    
+    from PIL import Image
     
     try:
         while duration <= 0 or (time.time() - start_time < duration):
@@ -70,32 +75,48 @@ def run_simulation(model_path=None, duration=20.0, wind_std=0.0):
             next_state, reward, terminated, truncated, _ = env.step(action)
             
             # Render
-            # Note: Wind force is internal to env, we can't easily get the exact random value 
-            # unless we return it or access it. For viz, let's just show the impulse + approximate wind.
-            # Actually, let's just show the impulse for clarity, or maybe we can hack it.
-            # For now, just show impulse.
             viz.render(state, force=action[0], external_force=impulse, step=step, reward=reward)
+            
+            if save_gif:
+                str_data = pygame.image.tostring(viz.screen, 'RGBA')
+                img = Image.frombytes('RGBA', (viz.width, viz.height), str_data)
+                frames.append(img)
             
             state = next_state
             step += 1
             
             if terminated or truncated:
                 print(f"Episode finished at step {step}. Resetting.")
+                if save_gif:
+                    break # Stop recording after one episode
                 state, _ = env.reset()
                 
     except KeyboardInterrupt:
         print("Simulation stopped by user.")
     finally:
         viz.close()
+        if save_gif and frames:
+            print(f"Saving GIF to {output_gif}...")
+            os.makedirs(os.path.dirname(output_gif), exist_ok=True)
+            frames[0].save(
+                output_gif,
+                save_all=True,
+                append_images=frames[1:],
+                optimize=True,
+                duration=16, # ~60 fps
+                loop=0
+            )
+            print("GIF saved.")
         print("Simulation complete.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Double Pendulum Simulation")
     parser.add_argument("--model", type=str, help="Path to trained model checkpoint (.pth)")
     parser.add_argument("--duration", type=float, default=0.0, help="Duration in seconds (0 for infinite)")
-    
     parser.add_argument("--wind", type=float, default=0.0, help="Standard deviation of wind force")
+    parser.add_argument("--save_gif", action="store_true", help="Save the run as a GIF")
+    parser.add_argument("--output", type=str, default="docs/images/final_run.gif", help="Output path for GIF")
     
     args = parser.parse_args()
     
-    run_simulation(args.model, args.duration, args.wind)
+    run_simulation(args.model, args.duration, args.wind, args.save_gif, args.output)
