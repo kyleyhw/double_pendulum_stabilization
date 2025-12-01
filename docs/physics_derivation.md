@@ -159,3 +159,10 @@ State vector $y = [x, \theta_1, \theta_2, \dot{x}, \dot{\theta}_1, \dot{\theta}_
 $$
 \dot{y} = [\dot{x}, \dot{\theta}_1, \dot{\theta}_2, \ddot{x}, \ddot{\theta}_1, \ddot{\theta}_2]^T
 $$
+
+## 6. Physical Constraints
+In a real-world system, the actuator (motor) driving the cart has physical limitations:
+1.  **Force Saturation ($F_{max}$)**: The motor cannot produce infinite force. We clip the control input:
+    $$ F_{applied} = \text{clip}(F_{command}, -F_{max}, F_{max}) $$
+    This prevents the agent from learning unrealistic "bang-bang" strategies that rely on infinite energy injection.
+2.  **Track Limits**: The cart has a finite range of motion. We enforce this by terminating the episode if $|x| > x_{limit}$.
