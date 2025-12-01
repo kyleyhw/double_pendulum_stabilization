@@ -47,14 +47,16 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=10.0, save_gif
     states = []
     
     # Common Env for parameters
-    base_env = DoublePendulumCartEnv()
+    # Note: Use reset_mode="down" if that's what we trained on!
+    # We should probably detect or default to "down" since that's the latest task.
+    base_env = DoublePendulumCartEnv(reset_mode="down")
     viz = Visualizer(base_env)
     
     state_dim = base_env.observation_space.shape[0]
     action_dim = base_env.action_space.shape[0]
 
     for cp in selected_checkpoints:
-        env = DoublePendulumCartEnv()
+        env = DoublePendulumCartEnv(reset_mode="down")
         state, _ = env.reset(seed=42) # Same seed for all to compare behavior!
         envs.append(env)
         states.append(state)
@@ -111,12 +113,34 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=10.0, save_gif
             color = pygame_colors[i]
             viz.draw_pendulum(state, color_p1=color, color_p2=color, alpha=alpha)
 
-        # Draw Legend
+        # Draw Legend with Background
+        legend_x = 10
+        legend_y = 10
+        padding = 5
+        line_height = 25
+        
+        # Background Box
+        bg_rect = pygame.Rect(legend_x, legend_y, 120, len(selected_checkpoints) * line_height + 30)
+        s = pygame.Surface((bg_rect.width, bg_rect.height))
+        s.set_alpha(200)
+        s.fill(viz.WHITE)
+        viz.screen.blit(s, (legend_x, legend_y))
+        
+        # Title
+        title = viz.font.render("Progress", True, viz.BLACK)
+        viz.screen.blit(title, (legend_x + padding, legend_y + padding))
+        
         for i, cp in enumerate(selected_checkpoints):
             ep_num = get_episode(cp)
             color = pygame_colors[i]
-            text = viz.font.render(f"Ep {ep_num}", True, color)
-            viz.screen.blit(text, (10, 10 + i * 20))
+            
+            # Color Box
+            box_y = legend_y + 30 + i * line_height
+            pygame.draw.rect(viz.screen, color, (legend_x + padding, box_y, 15, 15))
+            
+            # Text
+            text = viz.font.render(f"Ep {ep_num}", True, viz.BLACK)
+            viz.screen.blit(text, (legend_x + padding + 20, box_y))
 
         pygame.display.flip()
         
