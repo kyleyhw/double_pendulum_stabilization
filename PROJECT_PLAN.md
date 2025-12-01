@@ -17,15 +17,15 @@ This document outlines the planned phases and tasks for developing Double Pendul
     - [completed] Output: `tests/test_physics.py`.
 
 ## Phase 2: Reinforcement Learning Implementation
-4.  [pending] Agent Setup.
-    - [pending] Algorithm: Proximal Policy Optimization (PPO) or Soft Actor-Critic (SAC).
-    - [pending] Library: `stable-baselines3` (as a baseline) or custom implementation.
-5.  [pending] Reward Function Engineering.
-    - [pending] Design reward $R$ to maximize upright time and minimize cart displacement.
-    - [pending] $R = - (w_1 \theta_1^2 + w_2 \theta_2^2 + w_3 x^2 + w_4 \dot{q}^T \dot{q})$.
-6.  [pending] Training Loop.
-    - [pending] Implement the interaction loop.
-    - [pending] Logging of metrics (reward, episode length).
+4.  [completed] Agent Setup.
+    - [completed] Algorithm: Proximal Policy Optimization (PPO) or Soft Actor-Critic (SAC).
+    - [completed] Library: `stable-baselines3` (as a baseline) or custom implementation.
+5.  [completed] Reward Function Engineering.
+    - [completed] Design reward $R$ to maximize upright time and minimize cart displacement.
+    - [completed] $R = - (w_1 \theta_1^2 + w_2 \theta_2^2 + w_3 x^2 + w_4 \dot{q}^T \dot{q})$.
+6.  [completed] Training Loop.
+    - [completed] Implement the interaction loop.
+    - [completed] Logging of metrics (reward, episode length).
 
 ## Phase 3: Visualization & Analysis
 7.  [pending] Real-time Rendering.

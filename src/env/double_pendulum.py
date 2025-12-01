@@ -95,10 +95,37 @@ class DoublePendulumCartEnv(gym.Env):
         )
         truncated = False
         
-        # Reward Function (Placeholder for Phase 2)
-        # Penalize distance from upright (pi) and cart center (0)
-        # theta_err = angle_normalize(theta - pi)
-        reward = 0.0 
+        # Reward Function
+        # Goal: Stabilize at theta1 = pi, theta2 = pi
+        # Normalize angles to [-pi, pi]
+        t1 = (theta1 + np.pi) % (2 * np.pi) - np.pi
+        t2 = (theta2 + np.pi) % (2 * np.pi) - np.pi
+        
+        # Errors (target is pi, which maps to 0 in this shifted space if we shifted correctly? 
+        # No, let's just use cos distance for robustness against wrapping)
+        # Target: Upright (pi). cos(pi) = -1.
+        # We want to maximize: -(theta - pi)^2 approx (cos(theta) - (-1)) = cos(theta) + 1 ?
+        # No, if theta=pi, cos(pi)=-1. We want to minimize distance to -1.
+        # Let's use: R = -(theta_err)^2.
+        
+        # Angle error from pi
+        t1_err = angle_normalize(theta1 - np.pi)
+        t2_err = angle_normalize(theta2 - np.pi)
+        
+        # Weights
+        w1, w2, w3, w4 = 1.0, 1.0, 0.1, 0.01
+        
+        reward = -(
+            w1 * t1_err**2 + 
+            w2 * t2_err**2 + 
+            w3 * x**2 + 
+            w4 * (theta1_dot**2 + theta2_dot**2)
+        )
+        
+        # Bonus for staying alive (not crashing cart)
+        reward += 1.0
+
+ 
         
         return self._get_obs(), reward, terminated, truncated, {}
 
@@ -186,3 +213,6 @@ class DoublePendulumCartEnv(gym.Env):
 
     def render(self):
         pass
+
+def angle_normalize(x):
+    return ((x + np.pi) % (2 * np.pi)) - np.pi
