@@ -5,8 +5,9 @@ import time
 from datetime import datetime
 
 class Visualizer:
-    def __init__(self, env):
+    def __init__(self, env, headless=False):
         self.env = env
+        self.headless = headless
         
         # Screen Dimensions
         self.width = 800
@@ -23,8 +24,14 @@ class Visualizer:
         
         # Initialize Pygame
         pygame.init()
-        self.screen = pygame.display.set_mode((self.width, self.height))
-        pygame.display.set_caption("Double Pendulum Stabilization")
+        
+        if self.headless:
+            # Offscreen rendering
+            self.screen = pygame.Surface((self.width, self.height))
+        else:
+            self.screen = pygame.display.set_mode((self.width, self.height))
+            pygame.display.set_caption("Double Pendulum Stabilization")
+            
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("Arial", 16)
         
@@ -69,23 +76,28 @@ class Visualizer:
 
         # Draw Reward Plot
         self.draw_reward_plot()
-        
-        # Center of screen is (width/2, height/2)
-        ox = self.width / 2
-        oy = self.height / 2
-        
-        # Draw Coordinate System (Cartesian)
-        for i in range(-5, 6):
-            gx = int(ox + i * self.scale)
-            pygame.draw.line(self.screen, (240, 240, 240), (gx, 0), (gx, self.height), 1)
-            gy = int(oy + i * self.scale)
-            pygame.draw.line(self.screen, (240, 240, 240), (0, gy), (self.width, gy), 1)
 
-        # Main Axes
-        pygame.draw.line(self.screen, self.GRAY, (int(ox), 0), (int(ox), self.height), 1)
-        pygame.draw.line(self.screen, self.GRAY, (0, int(oy)), (self.width, int(oy)), 1)
+        # Info Text
+        info_text = [
+            f"Episode: {episode}",
+            f"Step: {step}",
+            f"Reward: {reward:.2f}",
+            f"Force: {force:.2f} N",
+            f"x: {state[0]:.2f} m",
+            f"Theta1: {state[1]:.2f} rad",
+            f"Theta2: {state[2]:.2f} rad",
+            f"Time: {datetime.now().strftime('%H:%M:%S')}",
+            "Reward Fn: Survival (LQR)"
+        ]
         
-        # Labels
+        for i, line in enumerate(info_text):
+            text_surf = self.font.render(line, True, self.BLACK)
+            self.screen.blit(text_surf, (10, 10 + i * 20))
+            
+        # Update Display
+        if not self.headless:
+            pygame.display.flip()
+            self.clock.tick(60)
         x_label = self.font.render("x (m)", True, self.GRAY)
         y_label = self.font.render("y (m)", True, self.GRAY)
         self.screen.blit(x_label, (self.width - 40, int(oy) + 5))
@@ -125,7 +137,15 @@ class Visualizer:
         if color_p1 is None: color_p1 = self.BLUE
         if color_p2 is None: color_p2 = self.RED
         
-        x, theta1, theta2, _, _, _ = state
+        if len(state) == 6:
+            x, theta1, theta2, _, _, _ = state
+        elif len(state) == 8:
+            # [x, sin1, cos1, sin2, cos2, x_dot, t1_dot, t2_dot]
+            x, s1, c1, s2, c2, _, _, _ = state
+            theta1 = np.arctan2(s1, c1)
+            theta2 = np.arctan2(s2, c2)
+        else:
+            raise ValueError(f"Invalid state dimension: {len(state)}")
         
         ox = self.width / 2
         oy = self.height / 2

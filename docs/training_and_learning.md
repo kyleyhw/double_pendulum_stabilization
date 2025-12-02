@@ -89,25 +89,6 @@ $$
 
 ### Weights:
 *   $w_{\theta_1} = 1.0$: High priority on the first link.
-*   $w_{\theta_2} = 1.0$: High priority on the second link.
-*   $w_x = 0.5$: **Increased Priority** on cart position to encourage re-centering and prevent wall crashes.
-*   $w_{\dot{q}} = 0.01$: Small penalty to dampen oscillations.
-
-## 4. Neural Network Architecture
-
-We use a shared backbone with separate heads for the Actor and Critic (or separate networks depending on implementation specifics).
-
-### Actor (Policy Network)
-*   **Input**: State vector (size 8).
-*   **Hidden Layers**: 2 layers of 64 units with `Tanh` activation.
-*   **Output**:
-    *   Mean ($\mu$): `Tanh` activation (mapped to $[-1, 1]$).
-    *   Log Standard Deviation ($\log \sigma$): Learnable parameter (state-independent) or output of a layer.
-*   **Action Selection**: $a_t \sim \mathcal{N}(\mu(s_t), \sigma)$.
-
-### Critic (Value Network)
-*   **Input**: State vector (size 8).
-*   **Hidden Layers**: 2 layers of 64 units with `Tanh` activation.
 *   **Output**: Scalar value $V(s_t)$ (linear activation). Estimate of discounted future return.
 
 ## 5. Exploration Strategy

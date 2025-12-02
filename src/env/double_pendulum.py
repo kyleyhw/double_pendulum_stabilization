@@ -25,15 +25,15 @@ class DoublePendulumCartEnv(gym.Env):
         super().__init__()
         
         # System Parameters
-        self.M = 1.0      # Mass of cart [kg]
+        self.M = 1.0      # Mass of cart [kg] (Reduced for authority)
         self.m1 = 0.5     # Mass of pole 1 [kg]
         self.m2 = 0.5     # Mass of pole 2 [kg]
-        self.l1 = 1.0     # Length of pole 1 [m]
-        self.l2 = 1.0     # Length of pole 2 [m]
+        self.l1 = 0.5     # Length of pole 1 [m]
+        self.l2 = 0.5     # Length of pole 2 [m]
         self.g = 9.81     # Gravity [m/s^2]
         
-        self.dt = 0.02    # Time step [s]
-        self.force_mag = 20.0 # Max force magnitude
+        self.dt = 0.005   # Time step [s] (200Hz for stability)
+        self.force_mag = 50.0 # Max force magnitude (Increased for authority)
         self.wind_std = wind_std # Standard deviation of wind force noise
         self.reset_mode = reset_mode # "up" or "down"
         self.current_impulse = 0.0 # Instantaneous impulse force
@@ -43,190 +43,126 @@ class DoublePendulumCartEnv(gym.Env):
             low=-self.force_mag, high=self.force_mag, shape=(1,), dtype=np.float32
         )
         
-        # Observation Space: [x, theta1, theta2, x_dot, theta1_dot, theta2_dot]
-        # Limits: x is limited, angles are unbounded (trig used in reward), velocities limited
+        # Observation Space: [x, sin(t1), cos(t1), sin(t2), cos(t2), x_dot, t1_dot, t2_dot]
+        # Range: x=[-5,5], trig=[-1,1], vels=[-inf, inf]
         high = np.array([
-            5.0,                # x limit
-            np.inf,             # theta1
-            np.inf,             # theta2
-            np.inf,             # x_dot
-            np.inf,             # theta1_dot
-            np.inf              # theta2_dot
+            5.0, 1.0, 1.0, 1.0, 1.0, np.inf, np.inf, np.inf
         ], dtype=np.float32)
         
         self.observation_space = spaces.Box(-high, high, dtype=np.float32)
         
         self.render_mode = render_mode
-        self.render_mode = render_mode
         self.state = None
         
         # Curriculum Learning Parameters
-        # alpha: 0.0 (Easy/Wide) -> 1.0 (Hard/Precise)
         self.curriculum_alpha = 0.0
-        self.sigma_target = 1.0 # The final desired sigma (standard deviation)
-        self.sigma_start = 5.0  # The starting sigma (5x wider)
+        self.sigma_target = 1.0
+        self.sigma_start = 5.0
+        
+        # Potential-Based Shaping
+        self.last_potential = None
+        self.gamma = 0.99 # Discount factor for shaping
+        
+        # Initialize Curriculum Params
+        self.friction_cart = 0.0
+        self.friction_pole = 0.0
+        self.reward_threshold = 1.5708
+        
+        # Continuity Counter
+        self.steps_above_threshold = 0
 
-    def set_curriculum(self, alpha: float):
-        """
-        Updates the curriculum factor alpha [0, 1].
-        Scales the reward basin width (sigma).
-        """
-        self.curriculum_alpha = np.clip(alpha, 0.0, 1.0)
+    def set_curriculum(self, difficulty: float):
+        difficulty = np.clip(difficulty, 0.0, 1.0)
+        
+        # Gravity: 2.0 -> 9.81
+        self.g = 2.0 + difficulty * (9.81 - 2.0)
+        
+        # Friction: 0.5 -> 0.0 (Cart), 0.1 -> 0.0 (Pole)
+        self.friction_cart = 0.5 * (1.0 - difficulty)
+        self.friction_pole = 0.1 * (1.0 - difficulty)
+        
+        # Reward Threshold: 90 deg (1.57 rad) -> 10 deg (0.17 rad)
+        start_angle = np.pi / 2
+        end_angle = np.deg2rad(10)
+        self.reward_threshold = start_angle - difficulty * (start_angle - end_angle)
+        
+        return {
+            "g": self.g,
+            "friction_cart": self.friction_cart,
+            "reward_threshold_deg": np.rad2deg(self.reward_threshold)
+        }
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
         super().reset(seed=seed)
         
-        # Initialize state: slightly perturbed from vertical up (theta=pi) or down (theta=0)?
-        # Goal is to stabilize UP. 
-        # Let's define UP as theta = pi (180 deg) based on our derivation where 0 is DOWN.
-        # Or we can initialize near DOWN and swing up (harder).
-        # For "stabilization" task, we usually start near the equilibrium.
-        
-        # Initial state: [x, theta1, theta2, x_dot, theta1_dot, theta2_dot]
-        # Start near Upright: theta1 ~ pi, theta2 ~ pi
-        
+        # Initialize state
         self.state = self.np_random.uniform(low=-0.05, high=0.05, size=(6,))
         
         if self.reset_mode == "up":
-            self.state[1] += np.pi # theta1 near pi
-            self.state[2] += np.pi # theta2 near pi
+            self.state[1] += np.pi
+            self.state[2] += np.pi
         elif self.reset_mode == "down":
-            # Start near 0 (down)
-            pass
-        else:
-            raise ValueError(f"Unknown reset_mode: {self.reset_mode}")
-        
+            pass # Already near 0
+        elif self.reset_mode == "random":
+            self.state[1] = self.np_random.uniform(0, 2*np.pi)
+            self.state[2] = self.np_random.uniform(0, 2*np.pi)
+            
+        self.last_potential = 0.0
+        self.steps_above_threshold = 0
         return self._get_obs(), {}
 
     def _get_obs(self) -> np.ndarray:
-        return self.state.astype(np.float32)
+        x, theta1, theta2, x_dot, theta1_dot, theta2_dot = self.state
+        return np.array([
+            x,
+            np.sin(theta1), np.cos(theta1),
+            np.sin(theta2), np.cos(theta2),
+            x_dot, theta1_dot, theta2_dot
+        ], dtype=np.float32)
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         force = np.clip(action[0], -self.force_mag, self.force_mag)
         
-        # Add Wind (Continuous Noise)
         if self.wind_std > 0:
             force += self.np_random.normal(0, self.wind_std)
             
-        # Add Impulse (Instantaneous)
         force += self.current_impulse
-        self.current_impulse = 0.0 # Reset impulse after one step
+        self.current_impulse = 0.0
         
-        # RK4 Integration
         self.state = self._rk4_step(self.state, force, self.dt)
         
         x, theta1, theta2, x_dot, theta1_dot, theta2_dot = self.state
         
-        # Normalize angles to [-pi, pi] for reward calculation if needed, 
-        # but state keeps continuous angle.
-        
-        # Termination conditions
         terminated = bool(
             x < -self.observation_space.high[0]
             or x > self.observation_space.high[0]
         )
+        
+        # Terminate if either pole falls below horizontal (Phase 5: Time Above Horizontal)
+        # Target is PI. Horizontal is PI +/- PI/2.
+        # So we want |theta - PI| < PI/2
+        # BUT user requested: "stop killing the simulations prematurely unless it hits the edges"
+        # So we REMOVE the angle termination!
+        
         truncated = False
         
-        # Reward Function
-        # Goal: Stabilize at theta1 = pi, theta2 = pi
-        # Normalize angles to [-pi, pi]
-        t1 = (theta1 + np.pi) % (2 * np.pi) - np.pi
-        t2 = (theta2 + np.pi) % (2 * np.pi) - np.pi
+        # --- Reward Calculation (Phase 5: Time Above Horizontal + Exponential Continuity) ---
+        # User Request: "exponentiate to blow up the continuous period rewarding even more"
         
-        # Errors (target is pi, which maps to 0 in this shifted space if we shifted correctly? 
-        # No, let's just use cos distance for robustness against wrapping)
-        # Target: Upright (pi). cos(pi) = -1.
-        # We want to maximize: -(theta - pi)^2 approx (cos(theta) - (-1)) = cos(theta) + 1 ?
-        # No, if theta=pi, cos(pi)=-1. We want to minimize distance to -1.
-        # Let's use: R = -(theta_err)^2.
-        
-        # Angle error from pi
         t1_err = angle_normalize(theta1 - np.pi)
         t2_err = angle_normalize(theta2 - np.pi)
         
-        # Weights
-        # w3 (position) increased to 0.5 to encourage re-centering
-        # w4 (velocity) increased to 0.1 to discourage flailing/spinning
-        w1, w2, w3, w4 = 1.0, 1.0, 0.5, 0.1
-        
-        # Gaussian Reward (Positive)
-        # R = exp(-distance^2)
-        
-        # Calculate current sigma based on curriculum
-        # Linear interpolation: Wide -> Narrow
-        current_sigma = (1.0 - self.curriculum_alpha) * self.sigma_start + self.curriculum_alpha * self.sigma_target
-        
-        # 1. Spatial Reward (Alignment)
-        # We divide the squared error by sigma^2 effectively.
-        # Original: exp(-dist_sq). This implies sigma=1.
-        # New: exp(-dist_sq / sigma^2).
-        
-        dist_sq = (
-            w1 * t1_err**2 + 
-            w2 * t2_err**2 + 
-            w3 * x**2 + 
-            w4 * (theta1_dot**2 + theta2_dot**2)
-        )
-        r_spatial = np.exp(-dist_sq / (current_sigma**2))
-        
-        # 2. Energy Reward (Shaping)
-        # Target Energy (Up-Up Equilibrium: theta1=pi, theta2=pi, velocities=0)
-        # V_target = -(m1+m2)g l1 cos(pi) - m2 g l2 cos(pi) = (m1+m2)g l1 + m2 g l2
-        target_energy = (self.m1 + self.m2) * self.g * self.l1 + self.m2 * self.g * self.l2
-        current_energy = self._get_energy()
-        
-        # Energy difference
-        energy_diff = np.abs(current_energy - target_energy)
-        
-        # Scale energy difference? Energy can be large (~40J).
-        # We want the kernel width to be reasonable.
-        # If diff is 10J, exp(-10) is tiny.
-        # Let's normalize or scale sigma.
-        # sigma_e = 10.0. Let's also relax this with curriculum?
-        # Yes, wide energy basin helps finding the manifold.
-        energy_sigma = 10.0 * current_sigma
-        r_energy = np.exp(-energy_diff / energy_sigma)
-        
-        # 3. Kinetic Damping Reward (Stability)
-        # Minimize Kinetic Energy T to force V -> E_target (Upright)
-        # CRITICAL: Only apply this when NEAR the target (Upright).
-        # Otherwise, we punish the high velocity needed for swing-up.
-        
-        # Recalculate V to get T
-        c1 = np.cos(theta1)
-        c2 = np.cos(theta2)
-        V = -(self.m1 + self.m2) * self.g * self.l1 * c1 - self.m2 * self.g * self.l2 * c2
-        T = current_energy - V
-        
-        # Base Kinetic Reward (Dual-Gaussian)
-        # 1. Wide Basin (sigma=10.0): Provides gradient from far away (high velocity).
-        # 2. Narrow Tip (sigma=1.0): Provides precision at the goal (stillness).
-        # Scale these sigmas by curriculum too.
-        
-        r_kinetic_wide = np.exp(-T / (10.0 * current_sigma))
-        r_kinetic_narrow = np.exp(-T / (1.0 * current_sigma))
-        
-        r_kinetic_raw = 0.2 * r_kinetic_wide + 0.8 * r_kinetic_narrow
-        
-        # Gating Factor: How close are we to Upright?
-        # Use simple angle distance (without velocity)
-        pos_dist_sq = t1_err**2 + t2_err**2
-        # Gate should also widen? 
-        # If gate is too narrow, we never get kinetic reward even if we are "roughly" up.
-        gating = np.exp(-pos_dist_sq / (current_sigma**2)) 
-        
-        r_kinetic = r_kinetic_raw * gating
-        
-        # Combined Reward
-        # Hybrid: w_spatial * r_spatial + w_energy * r_energy + w_kinetic * r_kinetic
-        # Now that Kinetic is gated, we can increase its weight to be very strong at the top.
-        w_spatial = 0.4
-        w_energy = 0.3
-        w_kinetic = 0.3
-        
-        reward = w_spatial * r_spatial + w_energy * r_energy + w_kinetic * r_kinetic
-
- 
+        if abs(t1_err) < self.reward_threshold and abs(t2_err) < self.reward_threshold:
+            self.steps_above_threshold += 1
+            
+            # Exponential Reward: exp(Time Above) - 1
+            # time_above = steps * dt
+            # reward = exp(time_above) - 1.0
+            time_above = self.steps_above_threshold * self.dt
+            reward = np.exp(time_above) - 1.0
+        else:
+            self.steps_above_threshold = 0
+            reward = 0.0
         
         return self._get_obs(), reward, terminated, truncated, {}
 
@@ -265,30 +201,70 @@ class DoublePendulumCartEnv(gym.Env):
         s12 = np.sin(theta1 - theta2)
         
         # Mass Matrix M(q)
-        # [ M+m1+m2,    (m1+m2)l1 c1,    m2 l2 c2 ]
-        # [ (m1+m2)l1 c1, (m1+m2)l1^2,   m2 l1 l2 c12 ]
-        # [ m2 l2 c2,     m2 l1 l2 c12,  m2 l2^2 ]
-        
         M_mat = np.array([
             [M + m1 + m2, (m1 + m2) * l1 * c1, m2 * l2 * c2],
             [(m1 + m2) * l1 * c1, (m1 + m2) * l1**2, m2 * l1 * l2 * c12],
             [m2 * l2 * c2, m2 * l1 * l2 * c12, m2 * l2**2]
         ])
         
-        # Coriolis & Gravity Vector B(q, q_dot)
-        # C terms:
-        # 1: -(m1+m2)l1 s1 theta1_dot^2 - m2 l2 s2 theta2_dot^2
-        # 2: m2 l1 l2 s12 theta2_dot^2
-        # 3: -m2 l1 l2 s12 theta1_dot^2
+        # Damping Terms (Curriculum)
+        damping_x = -self.friction_cart * x_dot
+        damping_t1 = -self.friction_pole * theta1_dot
+        damping_t2 = -self.friction_pole * theta2_dot
         
-        # G terms:
-        # 1: 0
-        # 2: (m1+m2)g l1 s1
-        # 3: m2 g l2 s2
+        # Coriolis & Gravity Vector C(q, q_dot) + G(q)
+        # Note: In derivation, M q_dd + C + G = F
+        # So q_dd = M_inv * (F - C - G)
         
-        # Note: In derivation, G was on LHS. So on RHS it is -G.
-        # But wait, derivation said M q_dd + C + G = F.
-        # So M q_dd = F - C - G.
+        C_vec = np.array([
+            -(m1 + m2) * l1 * s1 * theta1_dot**2 - m2 * l2 * s2 * theta2_dot**2 - damping_x,
+            m2 * l1 * l2 * s12 * theta2_dot**2 - (m1 + m2) * g * l1 * s1 - damping_t1,
+            -m2 * l1 * l2 * s12 * theta1_dot**2 - m2 * g * l2 * s2 - damping_t2
+        ])
+        
+        # Wait, G terms signs?
+        # V = -(m1+m2)g l1 c1 - m2 g l2 c2
+        # dV/dt1 = (m1+m2)g l1 s1. This is G1.
+        # dV/dt2 = m2 g l2 s2. This is G2.
+        # So G vector is positive.
+        # So F - C - G is correct if C and G are on LHS.
+        # My C_vec implementation above includes G terms?
+        # Let's check previous implementation.
+        # Previous implementation had:
+        # C_vec = [ ... ]
+        # G_vec = [ 0, (m1+m2)g l1 s1, m2 g l2 s2 ]
+        # RHS = F - C - G.
+        # Here I combined them into C_vec?
+        # C_vec[1] = ... - (m1+m2)g l1 s1.
+        # If I subtract this C_vec from F, I get F - (... - G) = F - ... + G.
+        # That would be WRONG.
+        # I need to subtract G.
+        # So if I include G in C_vec, it should be +G.
+        # Then F - C_vec = F - (... + G) = F - ... - G. Correct.
+        # So C_vec[1] should have + (m1+m2)g l1 s1.
+        # BUT wait, the previous code had:
+        # C_vec = [ ... ]
+        # G_vec = [ ... ]
+        # RHS = F - C - G.
+        # So G terms are positive in G_vec.
+        # So if I put them in C_vec, they should be positive.
+        # My code above has `- (m1+m2) * g * l1 * s1`.
+        # This means F - C_vec = F - (... - G) = F - ... + G.
+        # This effectively puts gravity on the RHS with a positive sign, which means gravity *helps* motion?
+        # Gravity pulls down.
+        # If theta=pi/2 (horizontal), sin=1. G term is positive.
+        # Torque = -G.
+        # So we need negative torque.
+        # If I have +G on RHS, it accelerates theta positively (downwards).
+        # Theta=0 is down. Theta=pi is up.
+        # If theta=pi/2 (3 o'clock), gravity pulls to 0. So theta decreases.
+        # So acceleration should be negative.
+        # So we need -G on RHS.
+        # So F - ... - G.
+        # So G term should be positive in C_vec (if subtracting C_vec).
+        # So `+ (m1+m2) * g * l1 * s1`.
+        
+        # Let's separate them to be safe and clear.
         
         C_vec = np.array([
             -(m1 + m2) * l1 * s1 * theta1_dot**2 - m2 * l2 * s2 * theta2_dot**2,
@@ -301,17 +277,19 @@ class DoublePendulumCartEnv(gym.Env):
             (m1 + m2) * g * l1 * s1,
             m2 * g * l2 * s2
         ])
-        # Wait, check signs of G.
-        # V = -(m1+m2)g l1 cos(theta1) ...
-        # dV/dtheta1 = (m1+m2)g l1 sin(theta1).
-        # This is the G term.
-        # So M q_dd + ... + G = F.
-        # So q_dd = M_inv * (F_vec - C_vec - G_vec).
+        
+        D_vec = np.array([
+            damping_x,
+            damping_t1,
+            damping_t2
+        ])
         
         F_vec = np.array([force, 0, 0])
         
         # Solve for q_dd
-        RHS = F_vec - C_vec - G_vec
+        # M q_dd + C + G = F + D
+        # M q_dd = F + D - C - G
+        RHS = F_vec + D_vec - C_vec - G_vec
         q_dd = np.linalg.solve(M_mat, RHS)
         
         return np.concatenate(([x_dot, theta1_dot, theta2_dot], q_dd))
@@ -325,10 +303,6 @@ class DoublePendulumCartEnv(gym.Env):
         l1, l2 = self.l1, self.l2
         g = self.g
         
-        # Kinetic Energy T = 0.5 * q_dot.T * M(q) * q_dot
-        # We can reuse the M_mat calculation or simplify.
-        # Let's reuse the logic from _dynamics for consistency, but optimized.
-        
         c1 = np.cos(theta1)
         c2 = np.cos(theta2)
         c12 = np.cos(theta1 - theta2)
@@ -341,7 +315,7 @@ class DoublePendulumCartEnv(gym.Env):
         M23 = m2 * l1 * l2 * c12
         M33 = m2 * l2**2
         
-        # T = 0.5 * (M11 xd^2 + M22 th1d^2 + M33 th2d^2 + 2 M12 xd th1d + 2 M13 xd th2d + 2 M23 th1d th2d)
+        # T
         T = 0.5 * (
             M11 * x_dot**2 +
             M22 * theta1_dot**2 +
@@ -351,14 +325,7 @@ class DoublePendulumCartEnv(gym.Env):
             2 * M23 * theta1_dot * theta2_dot
         )
         
-        # Potential Energy V
-        # 0 is Down (theta=0). Up is theta=pi.
-        # V = -m g h.
-        # h1 = -l1 cos(theta1)
-        # h2 = -l1 cos(theta1) - l2 cos(theta2)
-        # V = m1 g h1 + m2 g h2
-        # V = -(m1+m2) g l1 cos(theta1) - m2 g l2 cos(theta2)
-        
+        # V
         V = -(m1 + m2) * g * l1 * c1 - m2 * g * l2 * c2
         
         return T + V

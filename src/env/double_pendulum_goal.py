@@ -102,6 +102,10 @@ class DoublePendulumGoalEnv(DoublePendulumCartEnv):
         
         # 5. Reward Components (Reusing tuned weights)
         
+        # Calculate current sigma based on curriculum
+        # Linear interpolation: Wide -> Narrow
+        current_sigma = (1.0 - self.curriculum_alpha) * self.sigma_start + self.curriculum_alpha * self.sigma_target
+
         # Spatial
         w1, w2, w3, w4 = 1.0, 1.0, 0.5, 0.1
         dist_sq = (
@@ -110,10 +114,12 @@ class DoublePendulumGoalEnv(DoublePendulumCartEnv):
             w3 * x**2 + 
             w4 * (theta1_dot**2 + theta2_dot**2)
         )
-        r_spatial = np.exp(-dist_sq)
+        r_spatial = np.exp(-dist_sq / (current_sigma**2))
         
         # Energy
-        r_energy = np.exp(-energy_diff / 10.0)
+        # Scale energy difference? Energy can be large (~40J).
+        energy_sigma = 10.0 * current_sigma
+        r_energy = np.exp(-energy_diff / energy_sigma)
         
         # Kinetic Damping (Dual-Gaussian + Gating)
         # Recalculate V to get T
@@ -122,13 +128,13 @@ class DoublePendulumGoalEnv(DoublePendulumCartEnv):
         V = -(m1 + m2) * g * l1 * c1 - m2 * g * l2 * c2
         T = current_energy - V
         
-        r_kinetic_wide = np.exp(-T / 10.0)
-        r_kinetic_narrow = np.exp(-T / 1.0)
+        r_kinetic_wide = np.exp(-T / (10.0 * current_sigma))
+        r_kinetic_narrow = np.exp(-T / (1.0 * current_sigma))
         r_kinetic_raw = 0.2 * r_kinetic_wide + 0.8 * r_kinetic_narrow
         
         # Gating: Only apply kinetic reward when near SPATIAL target
         pos_dist_sq = t1_err**2 + t2_err**2
-        gating = np.exp(-pos_dist_sq)
+        gating = np.exp(-pos_dist_sq / (current_sigma**2))
         r_kinetic = r_kinetic_raw * gating
         
         # Combined

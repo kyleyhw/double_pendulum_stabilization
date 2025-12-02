@@ -60,7 +60,23 @@ Using the Kalman Rank Condition on the linearized dynamics, we proved that the s
 
 See the full proof and analysis in [docs/controllability_analysis.md](docs/controllability_analysis.md).
 
-### 3.3 State Space
+### 3.3 Stabilization Strategy (Phase 4)
+To achieve robust stabilization, we used **Energy Shaping** and **Curriculum Learning**.
+*   **Energy Shaping**: Rewards the agent for having the correct total energy, creating a global gradient.
+*   **Curriculum**: Slowly tightens the reward tolerance ($\sigma$) from "Wide" to "Narrow" during training.
+*   **Details**: [docs/stabilization_strategy.md](docs/stabilization_strategy.md)
+
+### 3.4 Multi-Equilibrium Strategy (Phase 5)
+To control all 4 equilibria with one agent, we use **Goal-Conditioned RL**.
+*   **Augmented State**: The agent receives the target equilibrium ID as an input.
+*   **Dynamic Reward**: The reward target shifts based on the requested goal.
+*   **Details**: [docs/multi_equilibrium_strategy.md](docs/multi_equilibrium_strategy.md)
+
+### 3.5 Reward Evolution
+For a detailed history of how we derived the reward function (from Naive Geometric to Hybrid Curriculum), see:
+*   [docs/reward_history.md](docs/reward_history.md)
+
+### 3.6 State Space
 The RL agent observes the full state vector:
 
 $$
@@ -105,7 +121,16 @@ double_pendulum_stabilization/
 
 ## 5. Usage
 
-### Installation
+### Stabilization Strategy: "The Ratchet"
+We use a **Curriculum Learning** approach inspired by [Underactuated Robotics](https://www.youtube.com/watch?v=9gQQAO4I1Ck&t=675s).
+
+1.  **Variable Physics**: The agent starts in a "Toy Universe" (Low Gravity, High Friction) and graduates to the "Real World" (Standard Gravity, Zero Friction).
+2.  **The Ratchet**: Difficulty increases by **1%** only when the agent beats its **all-time best** average reward.
+3.  **Exponential Reward**: We reward the agent exponentially for the duration it keeps the poles upright ($R \propto e^t$), creating a massive incentive for long-term stability.
+
+See [docs/stabilization_strategy.md](docs/stabilization_strategy.md) for full details.
+
+## Installation
 ```bash
 git clone https://github.com/kyleyhw/double_pendulum_stabilization.git
 cd double_pendulum_stabilization

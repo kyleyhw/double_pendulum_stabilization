@@ -14,7 +14,6 @@ from src.env.double_pendulum import DoublePendulumCartEnv
 from src.agent.ppo import PPOAgent
 from src.utils.visualizer import Visualizer
 
-def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=10.0, save_mp4=False, output_mp4="docs/images/overlay_montage.mp4"):
     # 1. Find Checkpoints from the LATEST run
     all_checkpoints = glob.glob(os.path.join(log_dir, "ppo_*_*.pth"))
     if not all_checkpoints:
@@ -38,6 +37,28 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=10.0, save_mp4
     print(f"Using checkpoints from latest run: {latest_run_id}")
     
     checkpoints = [f for f in all_checkpoints if latest_run_id in f]
+    
+    # Load Log File to get Difficulty
+    log_file = os.path.join(log_dir, f"training_log_{latest_run_id}.csv")
+    episode_difficulty = {}
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, "r") as f:
+                header = f.readline().strip().split(',')
+                diff_idx = header.index("Difficulty")
+                ep_idx = header.index("Episode")
+                
+                for line in f:
+                    parts = line.strip().split(',')
+                    if len(parts) > diff_idx:
+                        ep = int(parts[ep_idx])
+                        diff = float(parts[diff_idx])
+                        episode_difficulty[ep] = diff
+            print(f"Loaded difficulty map for {len(episode_difficulty)} episodes.")
+        except Exception as e:
+            print(f"Failed to load log file: {e}")
+    else:
+        print(f"Log file not found: {log_file}")
     
     def get_episode(f):
         try:
@@ -68,14 +89,39 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=10.0, save_mp4
     agents = []
     states = []
     
+    # Use headless mode for Visualizer to avoid window issues during generation
     base_env = DoublePendulumCartEnv(reset_mode="down")
-    viz = Visualizer(base_env)
+    viz = Visualizer(base_env, headless=True)
     
     state_dim = base_env.observation_space.shape[0]
     action_dim = base_env.action_space.shape[0]
 
     for cp in selected_checkpoints:
+        # Determine Difficulty
+        ep_num = get_episode(os.path.basename(cp))
+        # If final, find max episode in log? Or just use 1.0?
+        # Let's try to find exact match, or closest lower match.
+        
+        difficulty = 0.0
+        if ep_num in episode_difficulty:
+            difficulty = episode_difficulty[ep_num]
+        elif ep_num == 999999999: # Final
+             if episode_difficulty:
+                 difficulty = episode_difficulty[max(episode_difficulty.keys())]
+        else:
+            # Find closest
+            sorted_eps = sorted(episode_difficulty.keys())
+            for e in sorted_eps:
+                if e <= ep_num:
+                    difficulty = episode_difficulty[e]
+                else:
+                    break
+        
+        print(f"Checkpoint {os.path.basename(cp)} (Ep {ep_num}) -> Difficulty {difficulty:.2f}")
+        
         env = DoublePendulumCartEnv(reset_mode="down")
+        env.set_curriculum(difficulty) # Set Correct Physics!
+        
         state, _ = env.reset(seed=42) # Same seed for all to compare behavior!
         envs.append(env)
         states.append(state)
@@ -93,102 +139,6 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=10.0, save_mp4
     cmap = plt.get_cmap('viridis') # Blue to Green/Yellow
     colors = [cmap(i) for i in np.linspace(0, 1, len(selected_checkpoints))]
     # Convert to 0-255 RGB
-    pygame_colors = [(int(r*255), int(g*255), int(b*255)) for r,g,b,a in colors]
-
-    # 3. Simulation Loop
-    clock = pygame.time.Clock()
-    steps = int(duration * 60)
-    
-    print("Starting overlay simulation...")
-    
-    # Video Writer
-    video_writer = None
-    if save_mp4:
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video_writer = cv2.VideoWriter(output_mp4, fourcc, 60.0, (viz.width, viz.height))
-        print(f"Recording to {output_mp4}...")
-    
-    try:
-        for step in range(steps):
-            # Handle Events
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    return
-
-            # Update all agents
-            for i in range(len(agents)):
-                action, _ = agents[i].select_action(states[i])
-                next_state, reward, terminated, truncated, _ = envs[i].step(action)
-                states[i] = next_state
-                
-                # Track Reward History
-                reward_histories[i].append(reward)
-                if len(reward_histories[i]) > 100:
-                    reward_histories[i].pop(0)
-                
-                if terminated or truncated:
-                    states[i], _ = envs[i].reset(seed=42) # Reset to same start
-
-            # Render
-            viz.draw_background()
-            
-            # Draw all pendulums
-            for i, state in enumerate(states):
-                # Alpha: Make earlier ones more transparent? Or later ones?
-                # Let's make all somewhat transparent so they blend.
-                alpha = 100 if i < len(states) - 1 else 255 # Last one (best) is solid
-                
-                color = pygame_colors[i]
-                viz.draw_pendulum(state, color_p1=color, color_p2=color, alpha=alpha)
-
-            # Draw Multi-Line Reward Plot
-            viz.draw_reward_plot(histories=reward_histories, colors=pygame_colors)
-
-            # Draw Legend with Background
-            legend_x = 10
-            legend_y = 10
-            padding = 5
-            line_height = 25
-            
-            # Background Box
-            bg_rect = pygame.Rect(legend_x, legend_y, 140, len(selected_checkpoints) * line_height + 30)
-            s = pygame.Surface((bg_rect.width, bg_rect.height))
-            s.set_alpha(200)
-            s.fill(viz.WHITE)
-            viz.screen.blit(s, (legend_x, legend_y))
-            
-            # Title
-            title = viz.font.render("Progress (Ep)", True, viz.BLACK)
-            viz.screen.blit(title, (legend_x + padding, legend_y + padding))
-            
-            for i, cp in enumerate(selected_checkpoints):
-                ep_num = get_episode(os.path.basename(cp))
-                if ep_num == 999999999: ep_num = "Final"
-                color = pygame_colors[i]
-                
-                # Color Box
-                box_y = legend_y + 30 + i * line_height
-                pygame.draw.rect(viz.screen, color, (legend_x + padding, box_y, 15, 15))
-                
-                # Text
-                text = viz.font.render(f"{ep_num}", True, viz.BLACK)
-                viz.screen.blit(text, (legend_x + padding + 25, box_y))
-
-            pygame.display.flip()
-            
-            if save_mp4 and video_writer is not None:
-                frame = viz.get_frame()
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                video_writer.write(frame)
-                
-            clock.tick(60)
-
-    except KeyboardInterrupt:
-        print("Interrupted.")
-    finally:
-        if video_writer is not None:
-            video_writer.release()
             print(f"Montage saved to {output_mp4}")
         viz.close()
 
