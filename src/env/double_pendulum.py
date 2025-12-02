@@ -28,8 +28,8 @@ class DoublePendulumCartEnv(gym.Env):
         self.M = 1.0      # Mass of cart [kg] (Reduced for authority)
         self.m1 = 0.5     # Mass of pole 1 [kg]
         self.m2 = 0.5     # Mass of pole 2 [kg]
-        self.l1 = 0.5     # Length of pole 1 [m]
-        self.l2 = 0.5     # Length of pole 2 [m]
+        self.l1 = 1.0     # Length of pole 1 [m] (Doubled)
+        self.l2 = 1.0     # Length of pole 2 [m] (Doubled)
         self.g = 9.81     # Gravity [m/s^2]
         
         self.dt = 0.005   # Time step [s] (200Hz for stability)
@@ -98,12 +98,16 @@ class DoublePendulumCartEnv(gym.Env):
         # Initialize state
         self.state = self.np_random.uniform(low=-0.05, high=0.05, size=(6,))
         
-        if self.reset_mode == "up":
+        mode = self.reset_mode
+        if options and "mode" in options:
+            mode = options["mode"]
+            
+        if mode == "up":
             self.state[1] += np.pi
             self.state[2] += np.pi
-        elif self.reset_mode == "down":
+        elif mode == "down":
             pass # Already near 0
-        elif self.reset_mode == "random":
+        elif mode == "random":
             self.state[1] = self.np_random.uniform(0, 2*np.pi)
             self.state[2] = self.np_random.uniform(0, 2*np.pi)
             
@@ -155,17 +159,21 @@ class DoublePendulumCartEnv(gym.Env):
         if abs(t1_err) < self.reward_threshold and abs(t2_err) < self.reward_threshold:
             self.steps_above_threshold += 1
             
-            # Exponential Reward: exp(Time Above) - 1
-            # time_above = steps * dt
-            # reward = exp(time_above) - 1.0
+            # Exponential Reward: exp(time_above) - 1.0
             time_above = self.steps_above_threshold * self.dt
             reward = np.exp(time_above) - 1.0
+            
+            # Gaussian Position Penalty (Prevent Suiciding)
+            # Center at 0, sigma=1.0 (5 std devs to edge at 5.0)
+            sigma_x = 1.0
+            pos_penalty = np.exp(-(x**2) / (2 * sigma_x**2))
+            reward *= pos_penalty
         else:
             self.steps_above_threshold = 0
             reward = 0.0
         
         return self._get_obs(), reward, terminated, truncated, {}
-
+        
     def apply_impulse(self, force: float):
         """Apply an instantaneous force to the cart."""
         self.current_impulse = force

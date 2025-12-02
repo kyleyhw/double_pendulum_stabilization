@@ -14,20 +14,27 @@ def plot_learning_curve(log_dir="logs", output="docs/images/learning_curve.png")
     latest_file = max(list_of_files, key=os.path.getctime)
     print(f"Plotting from {latest_file}")
     
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+    
     try:
         df = pd.read_csv(latest_file)
         
         plt.figure(figsize=(10, 6))
-        plt.plot(df['episode'], df['reward'], label='Reward')
+        plt.plot(df['Episode'], df['Reward'], label='Reward')
         
         # Calculate rolling average
         if len(df) > 20:
-            df['rolling_reward'] = df['reward'].rolling(window=20).mean()
-            plt.plot(df['episode'], df['rolling_reward'], label='Avg Reward (20)', color='orange')
+            df['rolling_reward'] = df['Reward'].rolling(window=20).mean()
+            plt.plot(df['Episode'], df['rolling_reward'], label='Moving Avg (20 eps)', color='orange')
             
         plt.xlabel('Episode')
         plt.ylabel('Total Reward')
-        plt.title('Training Learning Curve')
+        
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        plt.title(f"Training Learning Curve (Generated: {timestamp})")
+        
         plt.legend()
         plt.grid(True)
         

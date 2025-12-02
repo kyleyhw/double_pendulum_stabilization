@@ -11,7 +11,7 @@ We define a "Difficulty" parameter $\alpha \in [0, 1]$ that interpolates between
 | **Gravity ($g$)** | $2.0 m/s^2$ | $9.81 m/s^2$ | Lower gravity slows down dynamics, giving the agent more reaction time. |
 | **Cart Friction** | $0.5$ | $0.0$ | High friction dampens mistakes and prevents the cart from flying off. |
 | **Pole Friction** | $0.1$ | $0.0$ | Joint friction helps stabilize the poles passively. |
-| **Reward Threshold** | $90^\circ$ | $10^\circ$ | A wide basin allows the agent to find "roughly up" solutions first. |
+| **Pole Length** | $1.0 m$ | $1.0 m$ | Longer poles (updated from 0.5m) lower natural frequency, aiding balance. |
 
 ## 2. The Ratchet Mechanism
 Instead of a fixed schedule, we use an adaptive "Ratchet" to increase difficulty.
@@ -19,7 +19,20 @@ Instead of a fixed schedule, we use an adaptive "Ratchet" to increase difficulty
 *   **Logic**: Difficulty increases by $\Delta \alpha = 0.01$ (1%) *only* if the agent's average reward exceeds its **all-time best** average reward.
 *   **Why?**: This ensures the agent has truly mastered the current level before moving on. If performance dips (due to harder physics), the difficulty stays constant until the agent recovers and surpasses its previous peak.
 
-## 3. Exponential Continuity Reward
+## 3. Reward Function Evolution (Tried & Failed)
+Before arriving at the current solution, several reward functions were tested:
+
+1.  **Energy Shaping ($E \to E_{target}$)**:
+    *   *Idea*: Reward the agent for matching the total energy of the Up-Up state.
+    *   *Failure*: Energy matching doesn't enforce a specific state ($x=0, \theta=0$). The agent would swing up but not stop.
+2.  **Simple Survival ($+1$ per step)**:
+    *   *Idea*: Reward for keeping poles upright.
+    *   *Failure*: "Suicide Policy". The agent learned to quickly move to a state where it could fall *slowly* to maximize steps, rather than balancing.
+3.  **LQR-Style Cost ($x^2 + \theta^2 + u^2$)**:
+    *   *Idea*: Penalize deviation from the target state.
+    *   *Failure*: Sensitive to weights. Hard to balance the cost of position vs. angle vs. control effort.
+
+## 4. The Solution: Exponential Continuity Reward
 To encourage robust stabilization (holding the poles up for long periods), we use an exponential reward function based on the duration of continuous stabilization.
 
 $$ R_t = \exp(\text{time\_above\_threshold}) - 1.0 $$
@@ -29,4 +42,4 @@ $$ R_t = \exp(\text{time\_above\_threshold}) - 1.0 $$
 *   **Effect**: This provides massive incentives for survival. Holding for 5 seconds is exponentially better than holding for 1 second.
 
 ## References
-*   **Underactuated Robotics**: [YouTube Lecture](https://www.youtube.com/watch?v=9gQQAO4I1Ck&t=675s) - Discusses energy shaping, swing-up control, and stabilization of underactuated systems.
+1.  **Underactuated Robotics**: [YouTube Lecture](https://www.youtube.com/watch?v=9gQQAO4I1Ck&t=675s) - Discusses energy shaping, swing-up control, and stabilization of underactuated systems.

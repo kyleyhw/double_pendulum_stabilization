@@ -12,7 +12,7 @@ class Visualizer:
         # Screen Dimensions
         self.width = 800
         self.height = 600
-        self.scale = 100 # Pixels per meter
+        self.scale = 70 # Pixels per meter (Fits 10m track in 800px)
         
         # Colors
         self.WHITE = (255, 255, 255)
@@ -39,7 +39,7 @@ class Visualizer:
         self.reward_history = []
         self.max_history = 100 # Show last 100 steps (2 seconds at dt=0.02)
         
-    def render(self, state, force=0.0, external_force=0.0, episode=0, step=0, reward=0.0):
+    def render(self, state, force=0.0, external_force=0.0, episode=0, step=0, reward=0.0, reward_fn_label="Reward Fn: SwingUp + Balance", seed=None):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -87,7 +87,8 @@ class Visualizer:
             f"Theta1: {state[1]:.2f} rad",
             f"Theta2: {state[2]:.2f} rad",
             f"Time: {datetime.now().strftime('%H:%M:%S')}",
-            "Reward Fn: Survival (LQR)"
+            f"Seed: {seed}" if seed is not None else "",
+            reward_fn_label
         ]
         
         for i, line in enumerate(info_text):

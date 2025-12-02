@@ -68,15 +68,19 @@ Following these failures, we pivoted to a **Curriculum Learning** approach ("The
 
 See [docs/stabilization_strategy.md](stabilization_strategy.md) for the full solution details.
 
-## Current Status (Failure Analysis)
-Despite high control authority and advanced RL tuning, the agent fails to achieve true stability.
-*   **Symptom**: "Clearly falling". The agent survives for 3-5 seconds but exhibits "flailing" or "fighting" behavior rather than converging to a quiet equilibrium.
-*   **Root Causes (Hypotheses)**:
-    1.  **Reward Landscape**: The "Survival with Penalty" reward might still encourage "living on the edge" rather than perfect stability.
-    2.  **Local Minima**: PPO might be stuck in a suboptimal policy that uses high-frequency actuation to fight gravity rather than finding the passive balance point.
-    3.  **Physics/Sim Mismatch**: The aggressive control ($50m/s^2$) might be inducing numerical instability or unrealistic physics artifacts, even at 200Hz.
+## Phase 6: Visualization Refactoring & Physics Update (Double Length)
+*   **Physics Update**:
+    *   **Pendulum Length**: Doubled from $l=0.5$m to $l=1.0$m.
+    *   **Reasoning**: Longer pendulums have a lower natural frequency ($\omega \propto \sqrt{g/l}$), making them slower and theoretically easier to balance (more reaction time). However, they require more energy to swing up ($E_{pot} \propto l$).
+*   **Visualization Pipeline**:
+    *   **Centralized Script**: `src/generate_report.py` orchestrates the entire process.
+    *   **Random Seeds**: Removed magic numbers. The script picks a random seed and passes it to all subprocesses (`visualize_overlay.py`, `simulate.py`), ensuring the "Overlay" and "Final Run" videos are mathematically identical.
+    *   **Side-by-Side Verification**: Automatically generates `comparison.mp4` to prove consistency.
+*   **Documentation**:
+    *   Updated `README.md` and `docs/` to reflect the new physics and pipeline.
 
-## Next Steps (The "Drawing Board")
-1.  **Re-evaluate Physics**: Is $M=1.0$kg too light? Is $F=50$N too strong?
-2.  **Control Theory Approach**: Implement a classic LQR controller first to prove stabilization is *possible* with current physics. If LQR can't do it, RL won't either.
-3.  **Curriculum**: Start with a single pendulum, then double.
+## References
+1.  [OpenAI Gym Documentation](https://www.gymlibrary.dev/)
+2.  [PPO Paper (Schulman et al., 2017)](https://arxiv.org/abs/1707.06347)
+3.  [Underactuated Robotics (Tedrake)](http://underactuated.mit.edu/)
+4.  [Double Pendulum Chaos (YouTube)](https://www.youtube.com/watch?v=pWekXMZJ2zM)

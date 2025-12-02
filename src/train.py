@@ -22,7 +22,7 @@ def train(load_model=None, max_episodes=5000):
     eps_clip = 0.1             # Clip parameter (Reduced for stability)
     
     # Logging
-    log_interval = 20          # Print avg reward every n episodes
+    log_interval = 50          # Print avg reward every n episodes (Reduced for performance)
     save_interval = 200        # Save model every n episodes
     
     # Create Env
@@ -52,10 +52,11 @@ def train(load_model=None, max_episodes=5000):
         
     print(f"Starting training: {run_name}")
     print(f"State Dim: {state_dim}, Action Dim: {action_dim}")
+    print(f"Logging Interval: {log_interval} episodes")
     
     # Initialize Exploration Noise (OU Process)
     from src.utils.noise import OUNoise
-    ou_noise = OUNoise(action_dim, theta=0.15, sigma=0.1)
+    ou_noise = OUNoise(action_dim, theta=0.5, sigma=0.3)
     
     # Training Loop
     time_step = 0
@@ -67,13 +68,17 @@ def train(load_model=None, max_episodes=5000):
     running_top_kinetic = 0
     running_cart_vel_std = 0
     
+    import collections
+    
     # Curriculum
     difficulty = 0.0
     best_avg_reward = -float('inf') # Initialize for Slow Ratchet
+    reward_window = collections.deque(maxlen=log_interval) # Sliding window for per-episode ratchet
     env.set_curriculum(difficulty)
     
     try:
         for i_episode in range(1, max_episodes+1):
+            # print(".", end="", flush=True) # Progress indicator (Removed)
             state, _ = env.reset()
             ou_noise.reset()
             current_ep_reward = 0
@@ -143,78 +148,64 @@ def train(load_model=None, max_episodes=5000):
             running_reward += current_ep_reward
             avg_length += t
             
-            # Update Running Metrics
-            ep_success_rate = ep_success_steps / t if t > 0 else 0
-            running_success_rate += ep_success_rate
+            # Sliding Window for Ratchet
+            reward_window.append(current_ep_reward)
             
-            ep_avg_top_k = ep_top_kinetic_sum / ep_top_kinetic_count if ep_top_kinetic_count > 0 else 0.0
-            running_top_kinetic += ep_avg_top_k
-            
-            ep_cart_std = np.std(ep_cart_vels) if len(ep_cart_vels) > 0 else 0.0
-            running_cart_vel_std += ep_cart_std
-            
-            # Log to CSV
-            with open(log_file, "a") as f:
-                f.write(f"{i_episode},{current_ep_reward},{t},{difficulty},{env.g},{env.friction_cart},{np.rad2deg(env.reward_threshold)}\n")
-            
-            # Logging & Curriculum Update
-            if i_episode % log_interval == 0:
-                avg_reward = running_reward / log_interval
-                avg_len = avg_length / log_interval
-                
-                # Metrics
-                avg_success = running_success_rate / log_interval
-                avg_top_k = running_top_kinetic / log_interval
-                avg_cart_std = running_cart_vel_std / log_interval
-                
-                # --- Adaptive Curriculum (Slow Ratchet) ---
-                # User Request: "1% at a time", "higher than *all previous* Rs"
-                # User Request: "cap for if we actually find a stable solution"
+            # --- Adaptive Curriculum (Per-Episode Ratchet) ---
+            if len(reward_window) >= log_interval:
+                window_avg_reward = np.mean(reward_window)
                 
                 # Calculate Max Theoretical Reward (Exponential)
-                # R = sum(exp(t*dt) - 1) for t in 1..max_timesteps
-                # This is a constant for a given max_timesteps
                 if 'max_theoretical_reward' not in locals():
                     steps = np.arange(1, max_timesteps + 1)
                     times = steps * env.dt
                     max_theoretical_reward = np.sum(np.exp(times) - 1.0)
                 
                 # Check for improvement (All-time high)
-                improved = avg_reward > best_avg_reward
+                improved = window_avg_reward > best_avg_reward
                 
                 # Check for Saturation (95% of Max Theoretical)
-                # If we are near perfect, we MUST level up or finish.
-                saturated = avg_reward > (0.95 * max_theoretical_reward)
+                saturated = window_avg_reward > (0.95 * max_theoretical_reward)
                 
                 if improved or saturated:
                     # Increase difficulty
                     difficulty += 0.01
                     difficulty = min(difficulty, 1.0)
                     params = env.set_curriculum(difficulty)
-                    print(f"*** Level Up! Difficulty: {difficulty:.2f} | G: {params['g']:.1f} | F: {params['friction_cart']:.2f} | Thresh: {params['reward_threshold_deg']:.1f} ***")
+                    print(f"\n*** Level Up! Difficulty: {difficulty:.2f} | G: {params['g']:.1f} | F: {params['friction_cart']:.2f} | Thresh: {params['reward_threshold_deg']:.1f} ***")
                     
                     # Update best (Ratchet)
-                    best_avg_reward = avg_reward
+                    best_avg_reward = window_avg_reward
                     
                     # Termination Condition
                     if difficulty >= 1.0 and saturated:
-                        print(f"*** SOLVED! Difficulty 1.0 reached with Reward {avg_reward:.0f}/{max_theoretical_reward:.0f} ***")
+                        print(f"\n*** SOLVED! Difficulty 1.0 reached with Reward {window_avg_reward:.0f}/{max_theoretical_reward:.0f} ***")
                         torch.save(agent.policy.state_dict(), os.path.join(log_dir, f"ppo_{run_id}_final.pth"))
                         break
+
+            # Log to CSV
+            with open(log_file, "a") as f:
+                f.write(f"{i_episode},{current_ep_reward},{t},{difficulty},{env.g},{env.friction_cart},{np.rad2deg(env.reward_threshold)}\n")
+            
+            # Logging (Print Stats)
+            if i_episode % log_interval == 0:
+                avg_reward = running_reward / log_interval
+                avg_len = avg_length / log_interval
                 
-                print(f"Ep {i_episode} | Diff: {difficulty:.2f} | R: {avg_reward:.0f}/{max_theoretical_reward:.0f} | L: {avg_len:.0f} | Succ: {avg_success*100:.1f}% | BestR: {best_avg_reward:.0f}")
+                # Metrics
+                avg_success = running_success_rate / log_interval
+                
+                print(f"\nEp {i_episode} | Diff: {difficulty:.2f} | R: {avg_reward:.0f}/{max_theoretical_reward:.0f} | L: {avg_len:.0f} | Succ: {avg_success*100:.1f}% | BestR: {best_avg_reward:.0f}")
                 
                 running_reward = 0
                 avg_length = 0
                 running_success_rate = 0
-                running_top_kinetic = 0
-                running_cart_vel_std = 0
                 
-            # Save Model
-            if i_episode % save_interval == 0:
-                save_path = os.path.join(log_dir, f"ppo_{run_name}_{i_episode}.pth")
-                ppo.save(save_path)
-                print(f"Model saved to {save_path}")
+                # Save Model
+                if i_episode % save_interval == 0:
+                    save_path = os.path.join(log_dir, f"ppo_{run_name}_{i_episode}.pth")
+                    ppo.save(save_path)
+                    print(f"Model saved to {save_path}")
         print("\nTraining interrupted by user.")
     finally:
         save_path = os.path.join(log_dir, f"ppo_{run_name}_final.pth")

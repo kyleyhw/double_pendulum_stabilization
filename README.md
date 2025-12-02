@@ -141,15 +141,20 @@ pip install -r requirements.txt
 
 ### Running
 *   **Train**: `python src/train.py`
-*   **Visualize**: `python src/simulate.py`
+*   **Generate Report**: `python src/generate_report.py`
+    *   Generates `overlay_montage.mp4`, `final_run.mp4`, `comparison.mp4`, and `learning_curve.png`.
+    *   Automatically handles random seeds and timestamping.
+*   **Visualize Single Run**: `python src/simulate.py`
+
+### Physics Update (Phase 6)
+*   **Pendulum Length**: $l_1 = l_2 = 1.0$m (Doubled from 0.5m).
+*   **Effect**: Slower dynamics (easier balance) but higher energy requirements (harder swing-up).
+
 **Progress Montage**:
 To see the agent's improvement over time (requires multiple checkpoints in `logs/`):
 ```bash
-# View on screen
-# View Overlay Montage (Ghost Effect)
-python src/visualize_overlay.py
-
-# The GIF is saved to docs/images/overlay_montage.gif by default.
+# Generate full report (Overlay + Final Run + Comparison)
+python src/generate_report.py
 ```
 
 ### Robustness Testing
