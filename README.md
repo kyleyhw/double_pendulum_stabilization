@@ -146,10 +146,6 @@ pip install -r requirements.txt
     *   Automatically handles random seeds and timestamping.
 *   **Visualize Single Run**: `python src/simulate.py`
 
-### Physics Update (Phase 6)
-*   **Pendulum Length**: $l_1 = l_2 = 1.0$m (Doubled from 0.5m).
-*   **Effect**: Slower dynamics (easier balance) but higher energy requirements (harder swing-up).
-
 **Progress Montage**:
 To see the agent's improvement over time (requires multiple checkpoints in `logs/`):
 ```bash
@@ -167,3 +163,9 @@ python src/simulate.py --wind 2.0
 
 # Use Left/Right Arrow keys to push the cart during simulation.
 ```
+
+## References
+1.  [OpenAI Gym Documentation](https://www.gymlibrary.dev/)
+2.  [PPO Paper (Schulman et al., 2017)](https://arxiv.org/abs/1707.06347)
+3.  [Underactuated Robotics (Tedrake)](http://underactuated.mit.edu/)
+4.  [Double Pendulum Chaos (YouTube)](https://www.youtube.com/watch?v=pWekXMZJ2zM)
