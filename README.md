@@ -122,11 +122,17 @@ double_pendulum_stabilization/
 ## 5. Usage
 
 ### Stabilization Strategy: "The Ratchet"
-We use a **Curriculum Learning** approach inspired by [Underactuated Robotics](https://www.youtube.com/watch?v=9gQQAO4I1Ck&t=675s).
+We use a **Curriculum Learning** approach inspired by Underactuated Robotics [[3]](#references).
 
 1.  **Variable Physics**: The agent starts in a "Toy Universe" (Low Gravity, High Friction) and graduates to the "Real World" (Standard Gravity, Zero Friction).
 2.  **The Ratchet**: Difficulty increases by **1%** only when the agent beats its **all-time best** average reward.
-3.  **Exponential Reward**: We reward the agent exponentially for the duration it keeps the poles upright ($R \propto e^t$), creating a massive incentive for long-term stability.
+3.  **Exponential Continuity Reward**: We reward the agent exponentially for the duration it keeps the poles upright ($R \propto e^t$).
+    *   Unlike a simple "step reward" (which encourages surviving *just* long enough), this creates a massive incentive for **infinite** stability.
+    *   $R_t = (\exp(t_{upright}) - 1) \times \text{penalty}$
+4.  **Stagnation Jiggle (Dynamic Decorrelation)**:
+    *   If the agent gets stuck at a specific difficulty level (reward plateau), we linearly increase the exploration noise (`min_std`).
+    *   This forces the agent to break out of local optima and find robust solutions that work across the curriculum.
+    *   The noise resets immediately upon leveling up.
 
 See [docs/stabilization_strategy.md](docs/stabilization_strategy.md) for full details.
 
@@ -169,3 +175,4 @@ python src/simulate.py --wind 2.0
 2.  [PPO Paper (Schulman et al., 2017)](https://arxiv.org/abs/1707.06347)
 3.  [Underactuated Robotics (Tedrake)](http://underactuated.mit.edu/)
 4.  [Double Pendulum Chaos (YouTube)](https://www.youtube.com/watch?v=pWekXMZJ2zM)
+5.  [Russ Tedrake: Underactuated Robotics (YouTube)](https://www.youtube.com/watch?v=9gQQAO4I1Ck&t=675s)

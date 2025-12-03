@@ -193,15 +193,23 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=20.0, save_mp4
     frames_written = 0
     reward_fn_label = "Reward Fn: SwingUp + Balance"
     
+    # Track reward history for ALL agents
+    all_reward_histories = [[] for _ in agents]
+    max_history_len = 100
+    
+
     for step in range(total_steps):
         # Step each agent in its OWN physics universe
         rewards = []
+        forces = [] # Store forces
         for i, agent in enumerate(agents):
             # Set physics for this agent
             envs[i].set_curriculum(difficulties[i])
             
             action, _ = agent.select_action(states[i], deterministic=True)
             scaled_action = action * envs[i].force_mag
+            forces.append(scaled_action[0]) # Store scalar force
+            
             # Step Env
             next_state, reward, terminated, truncated, _ = envs[i].step(scaled_action)
             done = terminated or truncated
@@ -209,25 +217,31 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=20.0, save_mp4
             if done:
                 # Reset this agent's environment
                 next_state, _ = envs[i].reset()
-                # Note: We don't reset the 'step' counter for the video loop, 
-                # but the agent starts a new episode.
                 
             states[i] = next_state
             rewards.append(reward)
             
-            # Render (Overlay)
+            # Update history
+            all_reward_histories[i].append(reward)
+            if len(all_reward_histories[i]) > max_history_len:
+                all_reward_histories[i].pop(0)
+            
+        # Render (Overlay)
         if step % stride == 0:
             # We pass the LAST state (Newest/Best) to clear screen and draw UI
-            # This ensures the UI stats reflect the current best model
-            # Note: visualizer.render updates the reward history for the agent passed to it.
-            # Use the actual episode label for the newest agent
             newest_ckpt = selected_checkpoints[-1]
             try:
                 newest_ep_label = os.path.basename(newest_ckpt).split('_')[-1].split('.')[0]
             except:
                 newest_ep_label = "?"
-                
-            visualizer.render(states[-1], episode=newest_ep_label, reward=rewards[-1], reward_fn_label=reward_fn_label, seed=seed)
+            
+            plot_colors = list(colors_rgb)
+            # Override final agent color to Blue for plot consistency with legend
+            plot_colors[-1] = (0, 0, 255)
+            
+            visualizer.render(states[-1], episode=newest_ep_label, step=step, force=forces[-1], reward=rewards[-1], 
+                              reward_fn_label=reward_fn_label, seed=seed,
+                              plot_histories=all_reward_histories, plot_colors=plot_colors)
             
             # Draw older agents as ghosts
             for i in range(len(agents) - 1):
@@ -250,25 +264,36 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=20.0, save_mp4
                 
                 if i == len(agents) - 1:
                     # Newest Agent (Rendered as Blue/Red)
-                    # Use Blue for text to match the primary pole color
-                    color = (0, 0, 255) 
-                    label_text = f"Ep {ep_label} (Final)"
+                    # Dual Color Text: "Ep X" (Blue) + "(Final)" (Red)
+                    
+                    # Shadow
+                    shadow_surf = visualizer.font.render(f"Ep {ep_label} (Final)", True, (0, 0, 0))
+                    visualizer.screen.blit(shadow_surf, (legend_x + 1, legend_base_y - i * 25 + 1))
+                    
+                    # Blue Part
+                    text_blue = visualizer.font.render(f"Ep {ep_label}", True, (0, 0, 255))
+                    visualizer.screen.blit(text_blue, (legend_x, legend_base_y - i * 25))
+                    
+                    # Red Part (Offset)
+                    offset_x = text_blue.get_width() + 5
+                    text_red = visualizer.font.render("(Final)", True, (255, 0, 0))
+                    visualizer.screen.blit(text_red, (legend_x + offset_x, legend_base_y - i * 25))
+                    
                 else:
                     color = colors_rgb[i]
                     label_text = f"Ep {ep_label}"
+                    
+                    # Shadow
+                    text_surf_shadow = visualizer.font.render(label_text, True, (0, 0, 0))
+                    visualizer.screen.blit(text_surf_shadow, (legend_x + 1, legend_base_y - i * 25 + 1))
+                    
+                    # Colored Text
+                    text_surf = visualizer.font.render(label_text, True, color)
+                    visualizer.screen.blit(text_surf, (legend_x, legend_base_y - i * 25))
 
-                # Draw Text with Shadow for readability
-                
-                # Shadow
-                text_surf_shadow = visualizer.font.render(label_text, True, (0, 0, 0))
-                visualizer.screen.blit(text_surf_shadow, (legend_x + 1, legend_base_y - i * 25 + 1))
-                
-                # Colored Text
-                text_surf = visualizer.font.render(label_text, True, color)
-                visualizer.screen.blit(text_surf, (legend_x, legend_base_y - i * 25))
-
-            # Draw Info (Top Left) - Frame Counter
-            visualizer.screen.blit(visualizer.font.render(f"Frame: {step}", True, (0, 0, 0)), (10, 200))
+            # Draw Info (Bottom Right) - Frame Counter
+            frame_text = visualizer.font.render(f"Frame: {step}", True, (0, 0, 0))
+            visualizer.screen.blit(frame_text, (visualizer.width - 120, visualizer.height - 30))
             
             # Capture frame
             if writer:

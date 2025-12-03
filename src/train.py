@@ -11,7 +11,14 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from src.env.double_pendulum import DoublePendulumCartEnv
 from src.agent.ppo import PPOAgent, Memory
 
-def train(load_model=None, max_episodes=5000):
+def train(load_model=None, max_episodes=5000, seed=None, start_difficulty=0.0):
+    # Set Seed
+    if seed is None:
+        seed = np.random.randint(0, 100000)
+    
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    print(f"Training with Seed: {seed}")
     # Hyperparameters
     env_name = "DoublePendulumCart-v0"
     max_timesteps = 4000       # Max timesteps per episode (20s at 200Hz)
@@ -43,18 +50,14 @@ def train(load_model=None, max_episodes=5000):
     # Logging Setup
     log_dir = "logs"
     os.makedirs(log_dir, exist_ok=True)
+    
     run_name = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # CSV Logging
     log_file = os.path.join(log_dir, f"training_log_{run_name}.csv")
-    with open(log_file, "w") as f:
-        f.write("Episode,Reward,Length,Difficulty,G,Friction,Threshold\n")
-        
-    print(f"Starting training: {run_name}")
-    print(f"State Dim: {state_dim}, Action Dim: {action_dim}")
-    print(f"Logging Interval: {log_interval} episodes")
     
-    # Initialize Exploration Noise (OU Process)
+    # Initialize Log File
+    with open(log_file, "w") as f:
+        f.write("Episode,Reward,Length,Difficulty,G,Friction,Threshold_Deg\n")
+        
     from src.utils.noise import OUNoise
     ou_noise = OUNoise(action_dim, theta=0.5, sigma=0.3)
     
@@ -64,17 +67,18 @@ def train(load_model=None, max_episodes=5000):
     avg_length = 0
     
     # Metrics
-    running_success_rate = 0
+    running_time_above_threshold = 0
     running_top_kinetic = 0
     running_cart_vel_std = 0
     
     import collections
     
     # Curriculum
-    difficulty = 0.0
+    difficulty = start_difficulty
     best_avg_reward = -float('inf') # Initialize for Slow Ratchet
     reward_window = collections.deque(maxlen=log_interval) # Sliding window for per-episode ratchet
     env.set_curriculum(difficulty)
+    episodes_since_last_levelup = 0
     
     try:
         for i_episode in range(1, max_episodes+1):
@@ -84,7 +88,7 @@ def train(load_model=None, max_episodes=5000):
             current_ep_reward = 0
             
             # Metrics per episode
-            ep_success_steps = 0
+            ep_steps_above_threshold = 0
             ep_top_kinetic_sum = 0
             ep_top_kinetic_count = 0
             ep_cart_vels = []
@@ -93,8 +97,11 @@ def train(load_model=None, max_episodes=5000):
                 time_step += 1
                 
                 # Select Action
+                # Stagnation Jiggle: Increase exploration if stuck
+                jiggle_std = min(1.0, episodes_since_last_levelup * 0.0005) # 0.0 at 0, 0.5 at 1000 eps
+                
                 noise = ou_noise.sample()
-                action, log_prob = ppo.select_action(state, noise_bias=noise)
+                action, log_prob = ppo.select_action(state, noise_bias=noise, min_std=jiggle_std)
                 
                 # Scale Action
                 scaled_action = action * env.force_mag
@@ -109,8 +116,8 @@ def train(load_model=None, max_episodes=5000):
                 # Reconstruct angles
                 theta1 = np.arctan2(s1, c1)
                 theta2 = np.arctan2(s2, c2)
-                
-                # Success (Upright < 10 deg)
+
+                # Calculate errors for Curriculum Ratchet
                 def angle_dist(th, target):
                     diff = (th - target + np.pi) % (2 * np.pi) - np.pi
                     return abs(diff)
@@ -118,13 +125,11 @@ def train(load_model=None, max_episodes=5000):
                 t1_err = angle_dist(theta1, np.pi)
                 t2_err = angle_dist(theta2, np.pi)
                 
-                is_upright = (t1_err < 0.17) and (t2_err < 0.17)
-                if is_upright:
-                    ep_success_steps += 1
-                    ep_top_kinetic_sum += (theta1_dot**2 + theta2_dot**2)
-                    ep_top_kinetic_count += 1
+                # Check if above CURRENT curriculum threshold
+                is_above_threshold = (t1_err < env.reward_threshold) and (t2_err < env.reward_threshold)
                 
-                ep_cart_vels.append(x_dot)
+                if is_above_threshold:
+                    ep_steps_above_threshold += 1
                 
                 # Save to memory
                 memory.states.append(state)
@@ -148,8 +153,12 @@ def train(load_model=None, max_episodes=5000):
             running_reward += current_ep_reward
             avg_length += t
             
+            # Update Running Metric (Fraction of time above threshold)
+            running_time_above_threshold += (ep_steps_above_threshold / max_timesteps)
+            
             # Sliding Window for Ratchet
             reward_window.append(current_ep_reward)
+            episodes_since_last_levelup += 1
             
             # --- Adaptive Curriculum (Per-Episode Ratchet) ---
             if len(reward_window) >= log_interval:
@@ -161,26 +170,35 @@ def train(load_model=None, max_episodes=5000):
                     times = steps * env.dt
                     max_theoretical_reward = np.sum(np.exp(times) - 1.0)
                 
-                # Check for improvement (All-time high)
-                improved = window_avg_reward > best_avg_reward
+                # Check for improvement (All-time high) - For UI only
+                # Update Best Reward continuously so logs reflect reality
+                if window_avg_reward > best_avg_reward:
+                    best_avg_reward = window_avg_reward
                 
                 # Check for Saturation (95% of Max Theoretical)
                 saturated = window_avg_reward > (0.95 * max_theoretical_reward)
                 
-                if improved or saturated:
+                # DYNAMIC MASTERY GATE:
+                # The required time above threshold scales with difficulty (0% -> 90%)
+                required_time_above = difficulty * 0.90
+                
+                window_time_above = running_time_above_threshold / log_interval
+                
+                # Ratchet Condition: Advance if Time Above Threshold met AND Reward is All-Time High
+                # User Requirement: "Train with Slow Ratchet (1% Increment, All-Time High)"
+                # We use >= because we just updated best_avg_reward above.
+                if (window_time_above > required_time_above) and (window_avg_reward >= best_avg_reward):
                     # Increase difficulty
                     difficulty += 0.01
                     difficulty = min(difficulty, 1.0)
+                    episodes_since_last_levelup = 0 # Reset Stagnation Counter
                     params = env.set_curriculum(difficulty)
-                    print(f"\n*** Level Up! Difficulty: {difficulty:.2f} | G: {params['g']:.1f} | F: {params['friction_cart']:.2f} | Thresh: {params['reward_threshold_deg']:.1f} ***")
-                    
-                    # Update best (Ratchet)
-                    best_avg_reward = window_avg_reward
+                    print(f"\n*** Level Up! Difficulty: {difficulty:.2f} | TimeAbove: {window_time_above*100:.1f}% (Req: {required_time_above*100:.0f}%) | G: {params['g']:.1f} | F: {params['friction_cart']:.2f} | Thresh: {params['reward_threshold_deg']:.1f} ***")
                     
                     # Termination Condition
                     if difficulty >= 1.0 and saturated:
-                        print(f"\n*** SOLVED! Difficulty 1.0 reached with Reward {window_avg_reward:.0f}/{max_theoretical_reward:.0f} ***")
-                        torch.save(agent.policy.state_dict(), os.path.join(log_dir, f"ppo_{run_id}_final.pth"))
+                        print(f"\n*** SOLVED! Difficulty 1.0 reached with Reward {window_avg_reward:.0f} ***")
+                        torch.save(ppo.policy.state_dict(), os.path.join(log_dir, f"ppo_{run_name}_final.pth"))
                         break
 
             # Log to CSV
@@ -193,13 +211,16 @@ def train(load_model=None, max_episodes=5000):
                 avg_len = avg_length / log_interval
                 
                 # Metrics
-                avg_success = running_success_rate / log_interval
+                avg_time_above = running_time_above_threshold / log_interval
                 
-                print(f"\nEp {i_episode} | Diff: {difficulty:.2f} | R: {avg_reward:.0f}/{max_theoretical_reward:.0f} | L: {avg_len:.0f} | Succ: {avg_success*100:.1f}% | BestR: {best_avg_reward:.0f}")
+                print(f"\nEp {i_episode} | Diff: {difficulty:.2f} | R: {avg_reward:.0f} | L: {avg_len:.0f} | TimeAbove: {avg_time_above*100:.1f}% | BestR: {best_avg_reward:.0f} | Jiggle: {jiggle_std:.2f}")
+                
+                if avg_reward > 0.9 * max_theoretical_reward:
+                    print(f"*** NEARLY SOLVED (90% Max Reward: {max_theoretical_reward:.0f}) ***")
                 
                 running_reward = 0
                 avg_length = 0
-                running_success_rate = 0
+                running_time_above_threshold = 0
                 
                 # Save Model
                 if i_episode % save_interval == 0:
@@ -237,7 +258,7 @@ def train(load_model=None, max_episodes=5000):
                 from src.simulate import run_simulation
                 
             print("Generating Final Run Video...")
-            run_simulation(model_path=save_path, duration=30.0, save_mp4=True, output="docs/images/final_run.mp4")
+            run_simulation(model_path=save_path, duration=30.0, save_mp4=True, output_mp4="docs/images/final_run.mp4", seed=seed)
         except Exception as e:
             print(f"Failed to generate final run video: {e}")
             
@@ -249,7 +270,7 @@ def train(load_model=None, max_episodes=5000):
                 from src.visualize_overlay import visualize_overlay
                 
             print("Generating Overlay Montage...")
-            visualize_overlay(log_dir=log_dir, num_checkpoints=5, duration=20.0, save_mp4=True, output_mp4="docs/images/overlay_montage.mp4")
+            visualize_overlay(log_dir=log_dir, num_checkpoints=5, duration=20.0, save_mp4=True, output_mp4="docs/images/overlay_montage.mp4", seed=seed)
         except Exception as e:
             print(f"Failed to generate overlay montage: {e}")
 
@@ -257,6 +278,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--load", type=str, help="Path to model to load")
     parser.add_argument("--episodes", type=int, default=5000, help="Number of episodes to train")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed")
+    parser.add_argument("--start_difficulty", type=float, default=0.0, help="Starting difficulty (0.0 to 1.0)")
     args = parser.parse_args()
     
-    train(load_model=args.load, max_episodes=args.episodes)
+    train(load_model=args.load, max_episodes=args.episodes, seed=args.seed, start_difficulty=args.start_difficulty)

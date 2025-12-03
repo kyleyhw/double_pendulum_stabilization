@@ -114,7 +114,7 @@ def generate_report(log_dir="logs", seed=None):
     subprocess.run(cmd_final, check=True)
     
     # 6. Run Learning Curve
-    print("\n[3/3] Generating Learning Curve...")
+    print("\n[3/4] Generating Learning Curve...")
     cmd_curve = [
         sys.executable, "src/plot_learning_curve.py",
         "--log_dir", log_dir,
@@ -122,8 +122,19 @@ def generate_report(log_dir="logs", seed=None):
     ]
     subprocess.run(cmd_curve, check=True)
     
-    # 7. Generate Side-by-Side Comparison
-    print("\n[4/4] Generating Side-by-Side Comparison...")
+    # 7. Run Diagnostics
+    print("\n[4/5] Running Diagnostics...")
+    report_md = os.path.join("docs/reports", f"TRAINING_REPORT_{timestamp}.md")
+    cmd_diag = [
+        sys.executable, "src/evaluate_diagnostics.py",
+        "--model", latest_model,
+        "--output", report_md,
+        "--episodes", "50"
+    ]
+    subprocess.run(cmd_diag, check=True)
+    
+    # 8. Generate Side-by-Side Comparison
+    print("\n[5/5] Generating Side-by-Side Comparison...")
     comparison_mp4 = os.path.join(output_dir, f"comparison_{timestamp}.mp4")
     create_comparison_video(overlay_mp4, final_run_mp4, comparison_mp4)
     

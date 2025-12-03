@@ -50,7 +50,7 @@ class ActorCritic(nn.Module):
         value = self.critic(state)
         return action_mean, value
     
-    def get_action(self, state, noise_bias=None, deterministic=False):
+    def get_action(self, state, noise_bias=None, deterministic=False, min_std=0.0):
         # Sample action from policy
         action_mean = self.actor(state)
         
@@ -60,8 +60,11 @@ class ActorCritic(nn.Module):
         if deterministic:
             return action_mean, None
             
-        std = self.log_std.exp().expand_as(action_mean)
-        dist = Normal(action_mean, std)
+        current_std = self.log_std.exp().expand_as(action_mean)
+        if min_std > 0.0:
+            current_std = torch.max(current_std, torch.tensor(min_std).to(current_std.device))
+            
+        dist = Normal(action_mean, current_std)
         
         action = dist.sample()
         log_prob = dist.log_prob(action).sum(dim=-1)
@@ -92,12 +95,12 @@ class PPOAgent:
         self.optimizer = optim.Adam(self.policy.parameters(), lr=lr)
         self.loss_fn = nn.MSELoss()
         
-    def select_action(self, state, noise_bias=None, deterministic=False):
+    def select_action(self, state, noise_bias=None, deterministic=False, min_std=0.0):
         with torch.no_grad():
             state = torch.FloatTensor(state).to(self.device)
             if noise_bias is not None:
                 noise_bias = torch.FloatTensor(noise_bias).to(self.device)
-            action, log_prob = self.policy.get_action(state, noise_bias, deterministic)
+            action, log_prob = self.policy.get_action(state, noise_bias, deterministic, min_std)
         
         if log_prob is None:
             return action.cpu().numpy(), None

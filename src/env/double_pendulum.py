@@ -33,7 +33,7 @@ class DoublePendulumCartEnv(gym.Env):
         self.g = 9.81     # Gravity [m/s^2]
         
         self.dt = 0.005   # Time step [s] (200Hz for stability)
-        self.force_mag = 50.0 # Max force magnitude (Increased for authority)
+        self.force_mag = 5000.0 # Max force magnitude (Increased 100x for authority)
         self.wind_std = wind_std # Standard deviation of wind force noise
         self.reset_mode = reset_mode # "up" or "down"
         self.current_impulse = 0.0 # Instantaneous impulse force
@@ -164,8 +164,8 @@ class DoublePendulumCartEnv(gym.Env):
             reward = np.exp(time_above) - 1.0
             
             # Gaussian Position Penalty (Prevent Suiciding)
-            # Center at 0, sigma=1.0 (5 std devs to edge at 5.0)
-            sigma_x = 1.0
+            # Center at 0, sigma=2.0 (Wider sweet spot)
+            sigma_x = 2.0
             pos_penalty = np.exp(-(x**2) / (2 * sigma_x**2))
             reward *= pos_penalty
         else:

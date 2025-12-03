@@ -39,7 +39,7 @@ class Visualizer:
         self.reward_history = []
         self.max_history = 100 # Show last 100 steps (2 seconds at dt=0.02)
         
-    def render(self, state, force=0.0, external_force=0.0, episode=0, step=0, reward=0.0, reward_fn_label="Reward Fn: SwingUp + Balance", seed=None):
+    def render(self, state, force=0.0, external_force=0.0, episode=0, step=0, reward=0.0, reward_fn_label="Reward Fn: SwingUp + Balance", seed=None, plot_histories=None, plot_colors=None):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -75,7 +75,10 @@ class Visualizer:
             self.screen.blit(label, (int(cart_x), int(cart_y - 50)))
 
         # Draw Reward Plot
-        self.draw_reward_plot()
+        if plot_histories is not None:
+            self.draw_reward_plot(histories=plot_histories, colors=plot_colors)
+        else:
+            self.draw_reward_plot()
 
         # Info Text
         info_text = [
@@ -229,8 +232,16 @@ class Visualizer:
         if not all_values: return
         
         max_r = max(all_values)
-        if max_r < 1.0: max_r = 1.0
-        min_r = 0.0 # Keep 0 as baseline
+        min_r = min(all_values)
+        
+        # Add padding
+        r_range = max_r - min_r
+        if r_range < 0.1:
+            max_r += 0.1
+            min_r -= 0.0 # Keep min at 0 if possible, or adjust
+            
+        # Ensure baseline 0 is visible if values are positive
+        if min_r > 0: min_r = 0
         
         # Draw each history
         for idx, history in enumerate(histories):
