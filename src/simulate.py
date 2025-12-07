@@ -12,24 +12,51 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from src.env.double_pendulum import DoublePendulumCartEnv
 from src.agent.ppo import PPOAgent
 from src.utils.visualizer import Visualizer
+from src.strategies.controls import ForceControl, VelocityControl
+from src.strategies.rewards import (
+    SwingUpBalanceReward, 
+    DoublePendulumStandardReward, 
+    SinglePendulumStandardReward, 
+    ExponentialSwingUpReward
+)
 
-def run_simulation(model_path=None, duration=20.0, wind_std=0.0, save_mp4=False, output_mp4=None, reset_mode="down", headless=False, episode_label="Final", difficulty=1.0, reward_fn_label="Reward Fn: SwingUp + Balance", seed=42):
-    """
-    Runs the Double Pendulum Cart simulation.
+def run_simulation(model_path=None, duration=20.0, wind_std=0.0, save_mp4=False, output_mp4=None, reset_mode="down", headless=False, episode_label="Final", difficulty=1.0, reward_fn_label="Reward Fn: SwingUp + Balance", seed=42, env_name="double", control="velocity", reward="exponential"):
 
-    Args:
-        model_path (str): Path to the trained PPO model checkpoint. If None, random actions are used.
-        duration (float): Duration of the simulation in seconds. If 0, runs indefinitely.
-        wind_std (float): Standard deviation of the wind force applied to the cart.
-        save_mp4 (bool): Whether to save the run as an MP4 video.
-        output_mp4 (str): Path to save the MP4. If None, generates a timestamped filename.
-        reset_mode (str): Mode for resetting the environment (e.g., 'down', 'random').
-        headless (bool): Run without opening a window (useful for background tasks).
-        episode_label (str): Label to display for the episode number (default: "Final").
-        difficulty (float): Curriculum difficulty level (0.0 to 1.0).
-        reward_fn_label (str): Label for the reward function display.
-    """
-    env = DoublePendulumCartEnv(wind_std=wind_std, reset_mode=reset_mode)
+    # 1. Control Strategy
+    if control == "force":
+        control_strategy = ForceControl()
+    elif control == "velocity":
+        control_strategy = VelocityControl()
+    else:
+        raise ValueError(f"Unknown control strategy: {control}")
+        
+    # 2. Reward Strategy
+    if reward == "exponential":
+        reward_strategy = ExponentialSwingUpReward()
+    elif reward == "standard":
+        if env_name == "single":
+            reward_strategy = SinglePendulumStandardReward()
+        else:
+            reward_strategy = DoublePendulumStandardReward()
+    else:
+        raise ValueError(f"Unknown reward strategy: {reward}")
+
+    if env_name == "single":
+        from src.env.single_pendulum import SinglePendulumCartEnv
+        env = SinglePendulumCartEnv(
+            wind_std=wind_std, 
+            reset_mode=reset_mode,
+            control_strategy=control_strategy,
+            reward_strategy=reward_strategy
+        )
+    else:
+        env = DoublePendulumCartEnv(
+            wind_std=wind_std, 
+            reset_mode=reset_mode,
+            control_strategy=control_strategy,
+            reward_strategy=reward_strategy
+        )
+
     env.set_curriculum(difficulty)
     viz = Visualizer(env, headless=headless)
     
@@ -68,7 +95,8 @@ def run_simulation(model_path=None, duration=20.0, wind_std=0.0, save_mp4=False,
              output_mp4 = f"docs/images/final_run_{timestamp}.mp4"
              
         # Ensure directory exists
-        os.makedirs(os.path.dirname(output_mp4), exist_ok=True)
+        if os.path.dirname(output_mp4):
+            os.makedirs(os.path.dirname(output_mp4), exist_ok=True)
         
         # Calculate stride to match target FPS
         # Sim FPS = 1/dt (e.g. 200)
@@ -97,16 +125,16 @@ def run_simulation(model_path=None, duration=20.0, wind_std=0.0, save_mp4=False,
             # Get Action
             if agent:
                 action, _ = agent.select_action(state, deterministic=True)
-                action = action * env.force_mag
+                # action = action * env.force_mag # REMOVED for Velocity Control
             else:
                 # Manual Control
                 keys = pygame.key.get_pressed()
-                force = 0.0
+                vel_cmd = 0.0
                 if keys[pygame.K_LEFT]:
-                    force = -10.0
+                    vel_cmd = -1.0
                 elif keys[pygame.K_RIGHT]:
-                    force = 10.0
-                action = np.array([force])
+                    vel_cmd = 1.0
+                action = np.array([vel_cmd])
             
             # Step Env
             next_state, reward, terminated, truncated, _ = env.step(action)
@@ -150,6 +178,18 @@ def run_simulation(model_path=None, duration=20.0, wind_std=0.0, save_mp4=False,
         if video_writer is not None:
             video_writer.release()
             print(f"Video saved to {output_mp4}")
+            
+            # Save timestamped copy
+            import shutil
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            base, ext = os.path.splitext(output_mp4)
+            output_ts = f"{base}_{ts}{ext}"
+            try:
+                shutil.copy2(output_mp4, output_ts)
+                print(f"Timestamped copy saved to {output_ts}")
+            except Exception as e:
+                print(f"Failed to save timestamped copy: {e}")
         viz.close()
         env.close()
 
@@ -164,6 +204,22 @@ if __name__ == "__main__":
     parser.add_argument("--headless", action="store_true", help="Run without window")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--difficulty", type=float, default=1.0, help="Curriculum difficulty (0.0 to 1.0)")
+    parser.add_argument("--env", type=str, default="double", choices=["single", "double"], help="Environment type")
+    parser.add_argument("--control", type=str, default="velocity", choices=["force", "velocity"], help="Control strategy")
+    parser.add_argument("--reward", type=str, default="exponential", choices=["standard", "exponential"], help="Reward strategy")
     args = parser.parse_args()
     
-    run_simulation(model_path=args.model, duration=args.duration, wind_std=args.wind, save_mp4=args.save_mp4, output_mp4=args.output, reset_mode=args.reset_mode, headless=args.headless, seed=args.seed, difficulty=args.difficulty)
+    run_simulation(
+        model_path=args.model, 
+        duration=args.duration, 
+        wind_std=args.wind, 
+        save_mp4=args.save_mp4, 
+        output_mp4=args.output, 
+        reset_mode=args.reset_mode, 
+        headless=args.headless, 
+        seed=args.seed, 
+        difficulty=args.difficulty, 
+        env_name=args.env,
+        control=args.control,
+        reward=args.reward
+    )
