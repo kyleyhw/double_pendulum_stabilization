@@ -1,0 +1,99 @@
+# agent-evolve manifest for the cart-pendulum runtime optimisation.
+#
+# Goal: ≥3× speedup on the training/test pipeline wall-time, without changing
+# physics. The bit-equivalence gate (`tests/test_pipeline_equivalence.py`)
+# enforces "physics-identical" at the byte level. The standard physics tests
+# (`test_physics.py`, `test_components.py`, `test_energy_reward.py`) enforce
+# behavioural correctness above and beyond bit-equivalence.
+version: 1
+
+problem:
+  description: >-
+    Optimise the cart-pendulum PPO training and test pipeline for runtime.
+    Preserve physics bit-identically (gate: tests/test_pipeline_equivalence.py)
+    and behaviourally (gates: tests/test_physics.py, tests/test_components.py,
+    tests/test_energy_reward.py).
+  mode: runtime
+  # Eval harness writes a single JSON object on stdout with metrics:
+  #   env_step_ms_mean       — env step microbenchmark (lower is better)
+  #   train_update_ms_mean   — PPO update wall-time (lower is better; PRIMARY)
+  #   test_pass_rate         — fraction of tests passing (must be 1.0)
+  #   total_eval_ms          — composite (lower is better)
+  #   all_gates_passed       — 1.0 if test_pass_rate == 1.0 and train returncode 0
+  eval_command: "python tools/evolve_eval.py --updates 5 --n_envs 4 --rollout_steps 256"
+  expected_baseline_tolerance: 0.10
+  metrics:
+    - name: train_update_ms_mean
+      optimise: minimize
+      primary: true
+    - name: env_step_ms_mean
+      optimise: minimize
+    - name: test_pass_rate
+      optimise: maximize
+      minimum: 1.0           # hard gate: any test failure → reject
+    - name: all_gates_passed
+      optimise: maximize
+      minimum: 1.0
+
+scope:
+  # Files candidates are allowed to mutate. Anything outside this set
+  # triggers a scope violation and immediate prune.
+  target_files:
+    - src/env/cart_pendulum_base.py
+    - src/env/double_pendulum.py
+    - src/env/single_pendulum.py
+    - src/env/double_pendulum_goal.py
+    - src/agent/ppo.py
+    - src/train.py
+    - src/utils/normalize.py
+    - src/strategies/rewards.py
+    - src/strategies/controls.py
+
+  # Hard "do not touch" — physics correctness anchors and the eval harness
+  # itself. Mutating these would either invalidate the comparison or break
+  # the supervisor's ability to score candidates.
+  do_not_touch:
+    - tests/test_physics.py
+    - tests/test_components.py
+    - tests/test_energy_reward.py
+    - tests/test_pipeline_equivalence.py
+    - tools/evolve_eval.py
+    - agent-evolve.yaml
+    - docs/physics_derivation.md
+    - PROJECT_PLAN.md
+
+evolution:
+  # One round of three orthogonal candidates is sufficient for an
+  # incremental optimisation pass — each candidate attacks a distinct layer
+  # of the pipeline. If a candidate doesn't break the ≥3× bar, we can run
+  # additional rounds compounding on the winner.
+  rounds: 1
+  candidates_per_round: 3
+  operators: [explore]
+  prune_strategy: pareto
+
+runtime_mode:
+  # Equivalence is enforced via the test suite (test_pipeline_equivalence.py),
+  # which is more thorough than the framework's property-based check for
+  # this stateful, multi-output env. So the framework-level check is
+  # disabled and the gate is the test_pass_rate metric.
+  equivalence_check: disabled
+  property_test_samples: 0
+
+safety:
+  protected_branch: master
+  agents_can_merge: false
+  require_human_approval: true
+  branch_cleanup: archive
+  run_ablation_report: false  # ablation pass is expensive; skip on the first round.
+
+backend:
+  type: local
+  root_dir: evolve-state
+
+agents:
+  supervisor: claude
+  explorer: claude
+  reviewer: claude
+
+artifact_mode: replace
