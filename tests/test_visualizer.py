@@ -1,14 +1,13 @@
 import sys
 import os
-import numpy as np
 import time
 import pygame
 
-# Add src to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Add project root so `src.*` imports resolve.
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from env.double_pendulum import DoublePendulumCartEnv
-from utils.visualizer import Visualizer
+from src.env.double_pendulum import DoublePendulumCartEnv
+from src.utils.visualizer import Visualizer
 
 def test_visualizer():
     env = DoublePendulumCartEnv()

@@ -3,14 +3,25 @@ import numpy as np
 import sys
 import os
 
-# Add src to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Add project root to path so `src.*` imports resolve.
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from env.double_pendulum import DoublePendulumCartEnv
+from src.env.double_pendulum import DoublePendulumCartEnv
+from src.strategies.controls import ForceControl
+from src.strategies.rewards import DoublePendulumStandardReward
 
 class TestDoublePendulumPhysics(unittest.TestCase):
     def setUp(self):
-        self.env = DoublePendulumCartEnv()
+        # Use ForceControl with action=0 -> F=0 so we measure pure physics.
+        # VelocityControl applies a P-controller to cart velocity, which would
+        # inject force whenever the cart drifts and so spoil the energy-conservation test.
+        self.env = DoublePendulumCartEnv(
+            control_strategy=ForceControl(),
+            reward_strategy=DoublePendulumStandardReward(),
+        )
+        # Reset friction to zero (pure physics; default already 0 but make explicit).
+        self.env.friction_cart = 0.0
+        self.env.friction_pole = 0.0
         
     def calculate_energy(self, state):
         x, theta1, theta2, x_dot, theta1_dot, theta2_dot = state
@@ -42,32 +53,32 @@ class TestDoublePendulumPhysics(unittest.TestCase):
         return T + V
 
     def test_energy_conservation(self):
-        """Test that total energy is conserved with zero external force."""
-        # Initialize in a general state
-        # x=0, theta1=1.0, theta2=2.0, velocities=0
+        """Total mechanical energy is conserved under zero external force.
+
+        Because RK4 is not symplectic, we expect bounded but non-zero drift over
+        a finite horizon. We integrate for one physical second (= 1 / dt steps,
+        i.e. 200 steps at dt = 0.005 s) and require <0.1% relative drift.
+        """
         state = np.array([0.0, 1.0, 2.0, 0.0, 0.0, 0.0])
-        self.env.state = state
-        
+        self.env.state = state.copy()
+        self.env.reward_strategy.reset()
+
         initial_energy = self.calculate_energy(state)
-        
-        # Run simulation for 1 second (50 steps at dt=0.02)
+
+        # 1 second of integration at the env's actual dt.
+        n_steps = int(round(1.0 / self.env.dt))
         energies = []
-        for _ in range(50):
-            # Apply zero force
-            obs, _, _, _, _ = self.env.step(np.array([0.0]))
-            energy = self.calculate_energy(self.env.state)
-            energies.append(energy)
-            
-        # Check conservation
-        # RK4 is not symplectic, so energy will drift slightly, but should be small.
-        # Allow 0.1% error over 1 second.
-        max_deviation = np.max(np.abs(np.array(energies) - initial_energy))
-        relative_error = max_deviation / np.abs(initial_energy)
-        
+        for _ in range(n_steps):
+            self.env.step(np.array([0.0]))  # ForceControl: action=0 -> F=0.
+            energies.append(self.calculate_energy(self.env.state))
+
+        max_deviation = float(np.max(np.abs(np.array(energies) - initial_energy)))
+        relative_error = max_deviation / float(np.abs(initial_energy))
+
         print(f"\nInitial Energy: {initial_energy:.4f}")
-        print(f"Max Deviation: {max_deviation:.6f}")
+        print(f"Max Deviation:  {max_deviation:.6f}")
         print(f"Relative Error: {relative_error:.6%}")
-        
+
         self.assertLess(relative_error, 1e-3, "Energy drift exceeded 0.1%")
 
 if __name__ == '__main__':

@@ -1,225 +1,181 @@
-import torch
-import numpy as np
-import sys
-import os
+r"""
+Run a trained PPO policy in the cart-pendulum environment, optionally
+recording video. Loads the observation normaliser from the checkpoint so the
+policy sees the same input distribution it was trained on.
+"""
+from __future__ import annotations
+
 import argparse
+import os
+import sys
 import time
+from datetime import datetime
+
+import numpy as np
 import pygame
 
-# Add src to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+# Add project root to path.
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from src.env.double_pendulum import DoublePendulumCartEnv
-from src.agent.ppo import PPOAgent
-from src.utils.visualizer import Visualizer
-from src.strategies.controls import ForceControl, VelocityControl
-from src.strategies.rewards import (
-    SwingUpBalanceReward, 
-    DoublePendulumStandardReward, 
-    SinglePendulumStandardReward, 
-    ExponentialSwingUpReward
+from src.agent.ppo import PPOAgent  # noqa: E402
+from src.env.double_pendulum import DoublePendulumCartEnv  # noqa: E402
+from src.env.single_pendulum import SinglePendulumCartEnv  # noqa: E402
+from src.strategies.controls import ForceControl, VelocityControl  # noqa: E402
+from src.strategies.rewards import (  # noqa: E402
+    DoublePendulumStandardReward,
+    EnergyShapingReward,
+    ExponentialSwingUpReward,
+    HybridLQRSwingUpReward,
+    LQRCostReward,
+    SinglePendulumStandardReward,
 )
+from src.utils.normalize import NormalizeObservation  # noqa: E402
+from src.utils.visualizer import Visualizer  # noqa: E402
 
-def run_simulation(model_path=None, duration=20.0, wind_std=0.0, save_mp4=False, output_mp4=None, reset_mode="down", headless=False, episode_label="Final", difficulty=1.0, reward_fn_label="Reward Fn: SwingUp + Balance", seed=42, env_name="double", control="velocity", reward="exponential"):
 
-    # 1. Control Strategy
-    if control == "force":
-        control_strategy = ForceControl()
-    elif control == "velocity":
-        control_strategy = VelocityControl()
-    else:
-        raise ValueError(f"Unknown control strategy: {control}")
-        
-    # 2. Reward Strategy
-    if reward == "exponential":
-        reward_strategy = ExponentialSwingUpReward()
-    elif reward == "standard":
-        if env_name == "single":
-            reward_strategy = SinglePendulumStandardReward()
-        else:
-            reward_strategy = DoublePendulumStandardReward()
-    else:
-        raise ValueError(f"Unknown reward strategy: {reward}")
+def run_simulation(
+    *,
+    model_path: str | None = None,
+    duration: float = 20.0,
+    wind_std: float = 0.0,
+    save_mp4: bool = False,
+    output_mp4: str | None = None,
+    reset_mode: str = "down",
+    headless: bool = False,
+    episode_label: str = "Final",
+    difficulty: float = 1.0,
+    reward_fn_label: str = "Reward Fn: Exponential SwingUp",
+    seed: int = 42,
+    env_name: str = "double",
+    control: str = "velocity",
+    reward_kind: str = "exponential",
+) -> None:
+    control_strategy = ForceControl() if control == "force" else VelocityControl()
+    reward_strategy = {
+        "exponential": ExponentialSwingUpReward(),
+        "energy": EnergyShapingReward(),
+        "lqr": LQRCostReward(),
+        "hybrid": HybridLQRSwingUpReward(),
+        "standard": (SinglePendulumStandardReward() if env_name == "single"
+                     else DoublePendulumStandardReward()),
+    }[reward_kind]
 
-    if env_name == "single":
-        from src.env.single_pendulum import SinglePendulumCartEnv
-        env = SinglePendulumCartEnv(
-            wind_std=wind_std, 
-            reset_mode=reset_mode,
-            control_strategy=control_strategy,
-            reward_strategy=reward_strategy
-        )
-    else:
-        env = DoublePendulumCartEnv(
-            wind_std=wind_std, 
-            reset_mode=reset_mode,
-            control_strategy=control_strategy,
-            reward_strategy=reward_strategy
-        )
+    EnvCls = SinglePendulumCartEnv if env_name == "single" else DoublePendulumCartEnv
+    raw_env = EnvCls(
+        wind_std=wind_std,
+        reset_mode=reset_mode,
+        control_strategy=control_strategy,
+        reward_strategy=reward_strategy,
+    )
+    if wind_std > 0:
+        raw_env.set_wind_pinned(wind_std)
+    raw_env.set_curriculum(difficulty)
+    if wind_std > 0:
+        raw_env.set_wind_pinned(wind_std)
 
-    env.set_curriculum(difficulty)
-    viz = Visualizer(env, headless=headless)
-    
+    env = NormalizeObservation(raw_env, training=False)
+    viz = Visualizer(raw_env, headless=headless)
+
     state_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.shape[0]
-    
-    agent = None
-    if model_path:
-        print(f"Loading model from {model_path}...")
-        agent = PPOAgent(state_dim, action_dim)
-        agent.load(model_path)
-        agent.policy.eval() # Set to eval mode
-    else:
-        print("No model provided. Running with random actions.")
+    action_dim = raw_env.action_space.shape[0]
 
-    state, _ = env.reset(seed=seed, options={"mode": reset_mode})
-    step = 0
-    
-    print("Starting simulation...")
-    print("Controls:")
-    print("  LEFT ARROW : Apply force Left")
-    print("  RIGHT ARROW: Apply force Right")
-    print("  Close window to exit.")
-    
-    # Video Saving Setup
-    video_writer = None
+    agent: PPOAgent | None = None
+    if model_path:
+        print(f"[load] {model_path}")
+        agent = PPOAgent(state_dim, action_dim)
+        payload = agent.load(model_path)
+        if "obs_rms" in payload:
+            env.obs_rms.load_state_dict(payload["obs_rms"])
+        else:
+            print("[warn] no obs_rms in checkpoint — running with identity normaliser.")
+        agent.policy.eval()
+    else:
+        print("[run] random actions (no model).")
+
+    obs, _ = env.reset(seed=seed, options={"mode": reset_mode})
+
     target_fps = 50.0
-    stride = 1
+    stride = max(1, int((1.0 / raw_env.dt) / target_fps))
+    real_fps = (1.0 / raw_env.dt) / stride
+
+    video_writer = None
     if save_mp4:
         import cv2
-        from datetime import datetime
-        
-        # Auto-generate filename if not provided or if it's the default placeholder
-        if output_mp4 is None or output_mp4 == "docs/images/final_run.mp4":
-             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-             output_mp4 = f"docs/images/final_run_{timestamp}.mp4"
-             
-        # Ensure directory exists
-        if os.path.dirname(output_mp4):
-            os.makedirs(os.path.dirname(output_mp4), exist_ok=True)
-        
-        # Calculate stride to match target FPS
-        # Sim FPS = 1/dt (e.g. 200)
-        # Stride = Sim FPS / Target FPS
-        sim_fps = 1.0 / env.dt
-        stride = max(1, int(sim_fps / target_fps))
-        real_fps = sim_fps / stride
-        
-        # Define codec and create VideoWriter
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v') # or 'avc1'
-        # Pygame screen is (800, 600)
+        if output_mp4 is None or output_mp4.endswith("final_run.mp4"):
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_mp4 = f"docs/images/final_run_{ts}.mp4"
+        os.makedirs(os.path.dirname(output_mp4), exist_ok=True)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         video_writer = cv2.VideoWriter(output_mp4, fourcc, real_fps, (800, 600))
-        print(f"Recording to {output_mp4} at {real_fps:.2f} FPS (Stride: {stride})...")
+        print(f"[rec]  {output_mp4} @ {real_fps:.1f} fps (stride {stride})")
 
-    # Calculate max steps
-    max_steps = int(duration / env.dt) if duration > 0 else float('inf')
+    max_steps = int(duration / raw_env.dt) if duration > 0 else 10**9
+    print("Controls: LEFT/RIGHT arrow keys to push the cart manually.")
 
     try:
-        while step < max_steps:
-            # Handle Pygame events
+        for step in range(max_steps):
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     return
 
-            # Get Action
             if agent:
-                action, _ = agent.select_action(state, deterministic=True)
-                # action = action * env.force_mag # REMOVED for Velocity Control
+                action, _ = agent.select_action(obs, deterministic=True)
             else:
-                # Manual Control
                 keys = pygame.key.get_pressed()
-                vel_cmd = 0.0
-                if keys[pygame.K_LEFT]:
-                    vel_cmd = -1.0
-                elif keys[pygame.K_RIGHT]:
-                    vel_cmd = 1.0
-                action = np.array([vel_cmd])
-            
-            # Step Env
-            next_state, reward, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
-            
-            # Render
-            # Only render if visible or capturing frame
-            if not headless or (save_mp4 and step % stride == 0):
-                viz.render(state, force=action[0], episode=episode_label, step=step, reward=reward, reward_fn_label=reward_fn_label, seed=seed)
-            
-            # Capture Frame
-            if save_mp4 and video_writer is not None and step % stride == 0:
-                frame = viz.get_frame()
-                # Pygame is RGB, OpenCV is BGR
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                video_writer.write(frame)
+                vel_cmd = (-1.0 if keys[pygame.K_LEFT] else 0.0) + \
+                          (1.0 if keys[pygame.K_RIGHT] else 0.0)
+                action = np.array([vel_cmd], dtype=np.float32)
 
-            state = next_state
-            step += 1
-            
+            obs, reward, term, trunc, _ = env.step(action)
+            done = bool(term or trunc)
+
+            if not headless or (save_mp4 and step % stride == 0):
+                viz.render(raw_env.state, force=float(action[0]),
+                           episode=episode_label, step=step, reward=float(reward),
+                           reward_fn_label=reward_fn_label, seed=seed)
+
+            if save_mp4 and video_writer is not None and step % stride == 0:
+                import cv2
+                frame = viz.get_frame()
+                video_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+
             if done:
-                print(f"Episode finished at step {step}. Resetting.")
-                state, _ = env.reset(options={"mode": reset_mode})
-                # Do NOT reset step count, as we want to capture 'duration' seconds of simulation
-                # But we might want to reset 'step' if we want to restart the episode?
-                # Actually, 'step' here is global simulation step.
-                # If we want to run for 20s, we just keep incrementing step.
-                
-                # However, viz.render uses 'step' for frame count?
-                # Yes.
-                pass
-                
-            # Enforce real-time playback if not headless and not saving video (optional)
+                obs, _ = env.reset(options={"mode": reset_mode})
+
             if not headless and not save_mp4:
-                # Simple sleep to prevent super-fast rendering
-                time.sleep(env.dt)
-                
+                time.sleep(raw_env.dt)
     except KeyboardInterrupt:
-        print("Simulation interrupted.")
+        print("[interrupt]")
     finally:
         if video_writer is not None:
             video_writer.release()
-            print(f"Video saved to {output_mp4}")
-            
-            # Save timestamped copy
-            import shutil
-            from datetime import datetime
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            base, ext = os.path.splitext(output_mp4)
-            output_ts = f"{base}_{ts}{ext}"
-            try:
-                shutil.copy2(output_mp4, output_ts)
-                print(f"Timestamped copy saved to {output_ts}")
-            except Exception as e:
-                print(f"Failed to save timestamped copy: {e}")
+            print(f"[saved] {output_mp4}")
         viz.close()
         env.close()
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run Double Pendulum Simulation")
-    parser.add_argument("--model", type=str, help="Path to trained model checkpoint (.pth)")
-    parser.add_argument("--duration", type=float, default=0.0, help="Duration in seconds (0 for infinite)")
-    parser.add_argument("--wind", type=float, default=0.0, help="Standard deviation of wind force")
-    parser.add_argument("--save_mp4", action="store_true", help="Save run as MP4")
-    parser.add_argument("--output", type=str, default="docs/images/final_run.mp4", help="Output MP4 path")
-    parser.add_argument("--reset_mode", type=str, default="down", help="Reset mode (up/down/random)")
-    parser.add_argument("--headless", action="store_true", help="Run without window")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--difficulty", type=float, default=1.0, help="Curriculum difficulty (0.0 to 1.0)")
-    parser.add_argument("--env", type=str, default="double", choices=["single", "double"], help="Environment type")
-    parser.add_argument("--control", type=str, default="velocity", choices=["force", "velocity"], help="Control strategy")
-    parser.add_argument("--reward", type=str, default="exponential", choices=["standard", "exponential"], help="Reward strategy")
+    parser = argparse.ArgumentParser(description="Run cart-pendulum simulation.")
+    parser.add_argument("--model", type=str, default=None)
+    parser.add_argument("--duration", type=float, default=0.0)
+    parser.add_argument("--wind", type=float, default=0.0)
+    parser.add_argument("--save_mp4", action="store_true")
+    parser.add_argument("--output", type=str, default="docs/images/final_run.mp4")
+    parser.add_argument("--reset_mode", type=str, default="down")
+    parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--difficulty", type=float, default=1.0)
+    parser.add_argument("--env", type=str, default="double", choices=["single", "double"])
+    parser.add_argument("--control", type=str, default="velocity",
+                        choices=["force", "velocity"])
+    parser.add_argument("--reward", type=str, default="exponential",
+                        choices=["standard", "exponential", "energy", "lqr", "hybrid"])
     args = parser.parse_args()
-    
+
     run_simulation(
-        model_path=args.model, 
-        duration=args.duration, 
-        wind_std=args.wind, 
-        save_mp4=args.save_mp4, 
-        output_mp4=args.output, 
-        reset_mode=args.reset_mode, 
-        headless=args.headless, 
-        seed=args.seed, 
-        difficulty=args.difficulty, 
-        env_name=args.env,
-        control=args.control,
-        reward=args.reward
+        model_path=args.model, duration=args.duration, wind_std=args.wind,
+        save_mp4=args.save_mp4, output_mp4=args.output, reset_mode=args.reset_mode,
+        headless=args.headless, seed=args.seed, difficulty=args.difficulty,
+        env_name=args.env, control=args.control, reward_kind=args.reward,
     )

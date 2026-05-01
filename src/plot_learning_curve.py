@@ -19,25 +19,33 @@ def plot_learning_curve(log_dir="logs", output="docs/images/learning_curve.png")
     
     try:
         df = pd.read_csv(latest_file)
-        
-        # Primary Axis: Reward
+
+        # Schema compatibility: the modern trainer writes "Update,EnvSteps,Episodes,Reward,..."
+        # while the legacy trainer wrote "Episode,Reward,...". Pick the x-axis based on
+        # whichever column is present.
+        if "Update" in df.columns:
+            x_col, x_label = "Update", "PPO update"
+        elif "Episode" in df.columns:
+            x_col, x_label = "Episode", "Episode"
+        else:
+            raise KeyError("Neither 'Update' nor 'Episode' found in CSV header.")
+
         ax1 = plt.gca()
-        ax1.plot(df['Episode'], df['Reward'], label='Reward', color='blue', alpha=0.3)
-        
-        # Calculate rolling average
+        ax1.plot(df[x_col], df['Reward'], label='Reward', color='blue', alpha=0.3)
+
         if len(df) > 20:
             df['rolling_reward'] = df['Reward'].rolling(window=20).mean()
-            ax1.plot(df['Episode'], df['rolling_reward'], label='Moving Avg (20 eps)', color='blue', linewidth=2)
-            
-        ax1.set_xlabel('Episode')
-        ax1.set_ylabel('Total Reward (Log Scale)', color='blue')
+            ax1.plot(df[x_col], df['rolling_reward'], label='Moving Avg (20)', color='blue', linewidth=2)
+
+        ax1.set_xlabel(x_label)
+        ax1.set_ylabel('Total Reward (symlog)', color='blue')
         ax1.set_yscale('symlog')
         ax1.tick_params(axis='y', labelcolor='blue')
         
         # Secondary Axis: Difficulty
         if 'Difficulty' in df.columns:
             ax2 = ax1.twinx()
-            ax2.plot(df['Episode'], df['Difficulty'], label='Difficulty', color='red', linestyle='--', alpha=0.5)
+            ax2.plot(df[x_col], df['Difficulty'], label='Difficulty', color='red', linestyle='--', alpha=0.5)
             ax2.set_ylabel('Difficulty (Curriculum)', color='red')
             ax2.tick_params(axis='y', labelcolor='red')
             ax2.set_ylim(0, 1.05)
@@ -58,6 +66,15 @@ def plot_learning_curve(log_dir="logs", output="docs/images/learning_curve.png")
         os.makedirs(os.path.dirname(output), exist_ok=True)
         plt.savefig(output)
         print(f"Saved plot to {output}")
+        
+        # Save timestamped version
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base, ext = os.path.splitext(output)
+        output_ts = f"{base}_{ts}{ext}"
+        plt.savefig(output_ts)
+        print(f"Saved timestamped plot to {output_ts}")
+        
         plt.close()
         
     except Exception as e:
