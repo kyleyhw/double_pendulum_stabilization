@@ -116,8 +116,8 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=20.0, save_mp4
         # Create Env for this agent
         agent_env = DoublePendulumCartEnv(reset_mode="down", wind_std=0.0)
         envs.append(agent_env)
-        
-        agent = PPOAgent(state_dim, action_dim, lr=0.0003, gamma=0.99, eps_clip=0.2, k_epochs=4)
+
+        agent = PPOAgent(state_dim, action_dim)
         agent.load(ckpt)
         agent.policy.eval()
         agents.append(agent)
@@ -137,6 +137,7 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=20.0, save_mp4
                 else:
                     break
         difficulties.append(diff)
+        agent_env.set_curriculum(diff) # Apply difficulty to env
         print(f"Checkpoint {os.path.basename(ckpt)} -> Difficulty {diff:.2f}")
 
     if not agents:
@@ -207,11 +208,10 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=20.0, save_mp4
             envs[i].set_curriculum(difficulties[i])
             
             action, _ = agent.select_action(states[i], deterministic=True)
-            scaled_action = action * envs[i].force_mag
-            forces.append(scaled_action[0]) # Store scalar force
-            
+            forces.append(float(action[0]))  # action is in [-1, 1] (control strategy maps to N).
+
             # Step Env
-            next_state, reward, terminated, truncated, _ = envs[i].step(scaled_action)
+            next_state, reward, terminated, truncated, _ = envs[i].step(action)
             done = terminated or truncated
             
             if done:
@@ -308,6 +308,19 @@ def visualize_overlay(log_dir="logs", num_checkpoints=5, duration=20.0, save_mp4
     if writer:
         writer.release()
         print(f"Video saved to {output_mp4}")
+        
+        # Save timestamped copy
+        import shutil
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base, ext = os.path.splitext(output_mp4)
+        output_ts = f"{base}_{ts}{ext}"
+        try:
+            shutil.copy2(output_mp4, output_ts)
+            print(f"Timestamped copy saved to {output_ts}")
+        except Exception as e:
+            print(f"Failed to save timestamped copy: {e}")
+
         print(f"Total Frames Written: {frames_written}")
         print(f"Expected Duration: {frames_written / 50.0:.2f}s (at 50 FPS)")
         
