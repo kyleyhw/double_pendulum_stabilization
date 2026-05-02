@@ -1,178 +1,214 @@
-# Double Pendulum Stabilization with Reinforcement Learning
+# Cart-Pendulum Stabilization with Reinforcement Learning
 
-## 1. Project Objective
-The goal of this project is to stabilize a **double pendulum on a cart** in the unstable upright equilibrium position ($\theta_1 = \pi, \theta_2 = \pi$) using Deep Reinforcement Learning (PPO). This system is a classic benchmark in control theory due to its high nonlinearity and chaotic dynamics.
+A reinforcement-learning study of swing-up and stabilization of a cart-pendulum
+(single and double) at the unstable upright equilibrium ($\theta_i = \pi$),
+using a from-scratch PPO implementation with curriculum learning, GAE-$\lambda$,
+tanh-squashed Gaussian policies, observation normalisation, and vectorised
+rollouts.
 
 ![Visualizer Screenshot](docs/images/visualizer_screenshot.png)
 
-## 2. Training Methodology
-We use **Proximal Policy Optimization (PPO)**, a state-of-the-art Deep Reinforcement Learning algorithm.
-
-![Learning Curve](docs/images/learning_curve.png)
-
-*   **Architecture**: The agent uses a **Neural Network** (Multi-Layer Perceptron) with two heads:
-    *   **Actor (Policy)**: Outputs the mean and standard deviation of a Gaussian distribution for the action (force). This allows the agent to "explore" the state space stochastically.
-    *   **Critic (Value)**: Estimates the expected future reward from the current state, used to compute the "advantage" of an action.
-*   **Exploration**:
-    *   **Stochastic Policy**: The agent samples actions from a Gaussian distribution.
-    *   **Zero-Mean Initialization**: The policy is initialized to be unbiased (zero mean), ensuring the agent explores both directions (Left/Right) equally at the start.
-    *   **Perturbations**: We can introduce **Wind** (continuous noise) and **Impulses** (sudden pushes) to force the agent to learn robust stabilization strategies.
-
-## 3. Mathematical Formulation
-
-### 3.1 System Dynamics
-The system consists of a cart of mass $M$ moving on a 1D track, with two links of mass $m_1, m_2$ and length $l_1, l_2$.
-
-**Generalized Coordinates**:
-
-$$
-q = [x, \theta_1, \theta_2]^T
-$$
-
-where $x$ is the cart position, and $\theta_i$ are the angles from the vertical down position.
-
-**Lagrangian Mechanics**:
-The Equations of Motion (EOM) are derived from the Euler-Lagrange equation:
-
-$$
-\frac{d}{dt} \left( \frac{\partial \mathcal{L}}{\partial \dot{q}} \right) - \frac{\partial \mathcal{L}}{\partial q} = \tau
-$$
-
-where $\mathcal{L} = T - V$.
-
-This yields the standard robotic manipulator form:
-
-$$
-M(q)\ddot{q} + C(q, \dot{q})\dot{q} + G(q) = B u
-$$
-
-
-*   **Inertia Matrix** $M(q)$: Symmetric, positive-definite matrix encoding the mass distribution and coupling between links.
-*   **Coriolis & Centrifugal Matrix** $C(q, \dot{q})$: Contains terms like $\dot{\theta}_i^2$ and $\dot{\theta}_1 \dot{\theta}_2$.
-*   **Gravity Vector** $G(q)$: Derived from potential energy $V(\theta)$.
-*   **Control Input** $u$: The force $F$ applied to the cart.
-
-For the full derivation, see [docs/physics_derivation.md](docs/physics_derivation.md).
-
-### 3.2 Controllability Analysis
-Before training, we mathematically verified that the unstable equilibria (Up-Up, Down-Up, Up-Down) are **controllable**.
-Using the Kalman Rank Condition on the linearized dynamics, we proved that the system is fully controllable ($\text{rank}(\mathcal{C}) = 6$) despite being underactuated.
-
-See the full proof and analysis in [docs/controllability_analysis.md](docs/controllability_analysis.md).
-
-### 3.3 Stabilization Strategy (Phase 4)
-To achieve robust stabilization, we used **Energy Shaping** and **Curriculum Learning**.
-*   **Energy Shaping**: Rewards the agent for having the correct total energy, creating a global gradient.
-*   **Curriculum**: Slowly tightens the reward tolerance ($\sigma$) from "Wide" to "Narrow" during training.
-*   **Details**: [docs/stabilization_strategy.md](docs/stabilization_strategy.md)
-
-### 3.4 Multi-Equilibrium Strategy (Phase 5)
-To control all 4 equilibria with one agent, we use **Goal-Conditioned RL**.
-*   **Augmented State**: The agent receives the target equilibrium ID as an input.
-*   **Dynamic Reward**: The reward target shifts based on the requested goal.
-*   **Details**: [docs/multi_equilibrium_strategy.md](docs/multi_equilibrium_strategy.md)
-
-### 3.5 Reward Evolution
-For a detailed history of how we derived the reward function (from Naive Geometric to Hybrid Curriculum), see:
-*   [docs/reward_history.md](docs/reward_history.md)
-
-### 3.6 State Space
-The RL agent observes the full state vector:
-
-$$
-\mathbf{s} = [x, \sin\theta_1, \cos\theta_1, \sin\theta_2, \cos\theta_2, \dot{x}, \dot{\theta}_1, \dot{\theta}_2]
-$$
-
-*Note: We use $\sin/\cos$ of angles to avoid discontinuity at $\pm \pi$.*
-
-### 3.4 Reward Function (Hybrid Physical Reward)
-The reward function is a weighted sum of three physical components:
-
-$$
-R_{total} = w_{spatial} R_{spatial} + w_{energy} R_{energy} + w_{kinetic} R_{kinetic}
-$$
-
-1.  **Spatial Reward ($R_{spatial}$)**: Gaussian penalty on position and angle errors. Encourages the agent to be in the correct configuration.
-2.  **Energy Reward ($R_{energy}$)**: Penalizes deviation from the target total energy ($E_{target}$). Encourages the agent to pump/dissipate energy to reach the correct manifold.
-3.  **Kinetic Damping ($R_{kinetic}$)**: Penalizes kinetic energy ($T$) when near the target. Forces the agent to stabilize (stop moving) once it reaches the upright position.
-
-This "Physical Reward" structure guides the agent through the energy landscape rather than just minimizing geometric error.
-
-
-## 4. Project Structure & Separation
-The project is strictly separated into **Simulation (Physics)** and **Agent (Brain)**:
+## 1. Repository structure
 
 ```
 double_pendulum_stabilization/
 ├── src/
-│   ├── env/                # SIMULATION (The World)
-│   │   └── double_pendulum.py  # Physics engine, EOMs, RK4 integrator.
-│   ├── agent/              # AGENT (The Brain)
-│   │   └── ppo.py              # Neural Network architecture & PPO algorithm.
-│   ├── train.py            # TRAINING (The School)
-│   │   └── ...                 # Connects Env and Agent for learning.
-│   └── simulate.py         # INFERENCE (The Test)
-│       └── ...                 # Runs the Agent in the Env without learning.
-├── docs/                   # Documentation
-│   ├── physics_derivation.md
-│   └── visualization.md
-└── ...
+│   ├── env/
+│   │   ├── cart_pendulum_base.py    # CartPendulumBase: shared dynamics shell
+│   │   ├── single_pendulum.py       # 1-pole subclass
+│   │   ├── double_pendulum.py       # 2-pole subclass (the headline task)
+│   │   └── double_pendulum_goal.py  # goal-conditioned variant (Phase 6)
+│   ├── strategies/
+│   │   ├── controls.py              # ForceControl, VelocityControl
+│   │   └── rewards.py               # *Standard, ExponentialSwingUp, EnergyShaping
+│   ├── agent/ppo.py                 # PPO + GAE + tanh squash + minibatches
+│   ├── control/                     # LQR baseline + controllability check
+│   ├── utils/
+│   │   ├── normalize.py             # RunningMeanStd + NormalizeObservation
+│   │   ├── schedules.py             # linear / cosine schedules
+│   │   └── visualizer.py            # Pygame renderer
+│   ├── train.py                     # vectorised PPO trainer
+│   ├── simulate.py                  # play a checkpoint with optional MP4 recording
+│   ├── evaluate_diagnostics.py      # deterministic-policy report
+│   └── generate_report.py           # builds learning curve + final-run + montage
+├── tests/
+│   ├── test_physics.py              # energy conservation under RK4
+│   ├── test_components.py           # PPO, normaliser, integrators, bounds
+│   └── test_energy_reward.py        # EnergyShapingReward
+├── docs/                            # derivations, images, training reports
+├── pyproject.toml                   # uv project, dev tooling (ruff, ty)
+└── .pre-commit-config.yaml          # ruff + ty + detect-secrets
 ```
 
-## 5. Usage
+## 2. Mathematical formulation
 
-### Stabilization Strategy: "The Ratchet"
-We use a **Curriculum Learning** approach inspired by Underactuated Robotics [[3]](#references).
+### 2.1 Dynamics
 
-1.  **Variable Physics**: The agent starts in a "Toy Universe" (Low Gravity, High Friction) and graduates to the "Real World" (Standard Gravity, Zero Friction).
-2.  **The Ratchet**: Difficulty increases by **1%** only when the agent beats its **all-time best** average reward.
-3.  **Exponential Continuity Reward**: We reward the agent exponentially for the duration it keeps the poles upright ($R \propto e^t$).
-    *   Unlike a simple "step reward" (which encourages surviving *just* long enough), this creates a massive incentive for **infinite** stability.
-    *   $R_t = (\exp(t_{upright}) - 1) \times \text{penalty}$
-4.  **Stagnation Jiggle (Dynamic Decorrelation)**:
-    *   If the agent gets stuck at a specific difficulty level (reward plateau), we linearly increase the exploration noise (`min_std`).
-    *   This forces the agent to break out of local optima and find robust solutions that work across the curriculum.
-    *   The noise resets immediately upon leveling up.
+Generalised coordinates $q = [x, \theta_1, \dots, \theta_N]^\top$, where each
+$\theta_i$ is measured from the *downward* vertical. The Lagrangian
+$\mathcal L = T - V$ produces, via the Euler–Lagrange equations, the standard
+manipulator form
 
-See [docs/stabilization_strategy.md](docs/stabilization_strategy.md) for full details.
+$$ M(q)\ddot q + C(q,\dot q) + G(q) = B u, \qquad B = [1,\ 0,\ \dots,\ 0]^\top. $$
 
-## Installation
+Only the cart is actuated, so the system is **underactuated** for $N \ge 1$. The
+upright equilibrium $\theta_i = \pi$ is unstable; the controllability of the
+linearised system at this fixed point is verified numerically in
+`docs/controllability_analysis.md`.
+
+The integrator is selectable: classical 4th-order Runge–Kutta (default) or
+*semi-implicit (symplectic) Euler* for long-horizon energy fidelity.
+
+### 2.2 Observation, action, reward
+
+Observation (double pendulum, 8-D):
+
+$$ \mathbf s = [x,\ \sin\theta_1,\ \sin\theta_2,\ \cos\theta_1,\ \cos\theta_2,\ \dot x,\ \dot\theta_1,\ \dot\theta_2]. $$
+
+The $\sin/\cos$ encoding eliminates the $\pm\pi$ wraparound. Observations are
+standardised through a running-mean/var wrapper, with state saved in the
+checkpoint.
+
+Action: a single scalar $a_t \in [-1, 1]$ produced by a tanh-squashed Gaussian
+policy. The control strategy maps the action to a physical force:
+
+* `ForceControl`: $F = a_t \cdot F_{\max}$.
+* `VelocityControl` (default): high-gain P-controller tracking
+  $v_{\rm cmd} = a_t \cdot v_{\max}$, approximating an ideal velocity source.
+
+Reward strategies:
+
+* `ExponentialSwingUpReward` (default): rewards the *duration* of an unbroken
+  upright run, $r_t = (\exp(\min(T_{\rm up}, T_{\rm cap})) - 1) \cdot P_x(x;\delta)$,
+  with the centring term $P_x$ tightening with curriculum.
+* `*StandardReward`: sparse +1 per upright step, plus an optional smooth
+  survival bonus $\alpha\cos\theta_1\cos\theta_2$ providing a gradient
+  outside the threshold band.
+* `EnergyShapingReward`: convex combination of an energy-error Gaussian, a
+  spatial alignment Gaussian, and a kinetic-damping term gated near upright;
+  provides a *global* gradient on the homoclinic manifold (Tedrake-style
+  swing-up).
+
+### 2.3 PPO with GAE
+
+For a trajectory of length $T$ with rewards $r_t$ and value estimates
+$V_\phi(s_t)$,
+
+$$ \delta_t = r_t + \gamma\,V_\phi(s_{t+1})\,\mathbb{1}_{\neg \mathrm{done}_t} - V_\phi(s_t), \qquad \hat A_t = \delta_t + \gamma\lambda\,\mathbb{1}_{\neg\mathrm{done}_t}\,\hat A_{t+1}. $$
+
+The critic target $\hat R_t = \hat A_t + V_\phi(s_t)$ is the TD($\lambda$)
+return. **Advantages** (not returns) are normalised per-update.
+
+Per-env GAE — important: when collecting rollouts from $N$ parallel envs,
+advantages must be computed **per env** (per trajectory). Mixing transitions
+across envs corrupts the temporal-difference target.
+
+Policy:
+
+$$ z \sim \mathcal N(\mu_\theta(s), \sigma_\theta), \qquad a = \tanh(z), \qquad \log\pi(a\mid s) = \log\mathcal N(z) - \sum_i \log(1 - \tanh^2 z_i + \varepsilon). $$
+
+The change-of-variables term eliminates the bias that would arise from
+clipping a Normal distribution into $[-1, 1]$.
+
+The K-epoch loss with minibatches and gradient clipping:
+
+$$ \mathcal L = -\mathbb E[\min(\rho\,\hat A,\ \mathrm{clip}(\rho, 1\pm\epsilon)\,\hat A)] + c_v\,\mathbb E[(V_\phi - \hat R)^2] - c_e\,\mathbb E[\mathcal H(\pi)]. $$
+
+LR, clip, and entropy coefficient are linearly annealed over training; an
+optional KL early-stop guards against destructive updates.
+
+### 2.4 Adaptive ratchet curriculum
+
+Curriculum knob $\delta\in[0,1]$ schedules:
+
+$$ g(\delta) = 2.0 + 7.81\delta, \quad \mu_{\rm cart}(\delta) = 0.5(1-\delta), \quad \mu_{\rm pole}(\delta) = 0.1(1-\delta), \quad \sigma_w(\delta) = \sigma_w^{\max}\delta, \quad \epsilon(\delta) = 90^\circ - 80^\circ\delta. $$
+
+A "level-up" advances $\delta$ only when the rolling-window mean reward strictly
+beats the *previous* all-time best **and** the time-above-threshold metric
+exceeds $0.9\delta$. The step size is *adaptive*:
+
+$$ \Delta\delta = \mathrm{clip}\!\left(\Delta\delta_{\max}\cdot\frac{\bar R - \bar R_{\rm prev best}}{R_{\max}},\ \Delta\delta_{\min},\ \Delta\delta_{\max}\right) $$
+
+— big wins jump faster, small ones creep.
+
+### 2.5 Soft cart bounds
+
+A *soft* boundary penalty
+$-k_{\rm bnd}\,\max(0, |x| - x_{\rm soft})^2$ replaces hard termination at the
+cart wall. Hard termination is retained at a much wider $x_{\rm hard}$ as a
+safety net for numerical states.
+
+## 3. Quickstart
+
 ```bash
-git clone https://github.com/kyleyhw/double_pendulum_stabilization.git
-cd double_pendulum_stabilization
-python -m venv venv
-# Activate venv (Windows: venv\Scripts\activate, Unix: source venv/bin/activate)
+# uv-based (preferred, per the project's tooling policy)
+uv sync
+uv run python src/train.py --env double --reward exponential
+
+# pip
 pip install -r requirements.txt
+python src/train.py --env double --reward exponential
 ```
 
-### Running
-*   **Train**: `python src/train.py`
-*   **Generate Report**: `python src/generate_report.py`
-    *   Generates `overlay_montage.mp4`, `final_run.mp4`, `comparison.mp4`, and `learning_curve.png`.
-    *   Automatically handles random seeds and timestamping.
-*   **Visualize Single Run**: `python src/simulate.py`
+### 3.1 Common training commands
 
-**Progress Montage**:
-To see the agent's improvement over time (requires multiple checkpoints in `logs/`):
 ```bash
-# Generate full report (Overlay + Final Run + Comparison)
+# Single pendulum, default vectorised (8 envs).
+python src/train.py --env single --reward exponential
+
+# Double pendulum with energy-shaping reward (Tedrake-style swing-up).
+python src/train.py --env double --reward energy
+
+# Resume a run.
+python src/train.py --env double --load logs/ppo_double_velocity_exponential_<ts>_final.pth
+
+# Aggressive: 16 envs, long rollouts, no eval interruptions.
+python src/train.py --env double --n_envs 16 --rollout_steps 1024 --eval_every 0
+
+# Symplectic integrator for long-horizon physics fidelity.
+python src/train.py --env double --integrator semi_implicit
+```
+
+### 3.2 Inference and reports
+
+```bash
+python src/simulate.py --model logs/ppo_double_..._final.pth --duration 20 --save_mp4
+python src/evaluate_diagnostics.py --model logs/ppo_double_..._final.pth --episodes 50
 python src/generate_report.py
 ```
 
-### Robustness Testing
-You can test the agent's stability against external forces (wind, pushes).
-See [docs/robustness.md](docs/robustness.md) for details.
+### 3.3 TensorBoard
+
+Every training run writes scalars to `logs/tb/<run_name>/`:
 
 ```bash
-# Run with wind
-python src/simulate.py --wind 2.0
-
-# Use Left/Right Arrow keys to push the cart during simulation.
+tensorboard --logdir logs/tb
 ```
 
-## References
-1.  [OpenAI Gym Documentation](https://www.gymlibrary.dev/)
-2.  [PPO Paper (Schulman et al., 2017)](https://arxiv.org/abs/1707.06347)
-3.  [Underactuated Robotics (Tedrake)](http://underactuated.mit.edu/)
-4.  [Double Pendulum Chaos (YouTube)](https://www.youtube.com/watch?v=pWekXMZJ2zM)
-5.  [Russ Tedrake: Underactuated Robotics (YouTube)](https://www.youtube.com/watch?v=9gQQAO4I1Ck&t=675s)
+Watch:
+
+* `rollout/reward_mean`, `rollout/time_above_mean` — rising = learning.
+* `ppo/explained_variance` — closer to 1 means the critic predicts returns
+  well; values near 0 indicate a noisy critic (often a sign of unstable
+  reward magnitudes).
+* `ppo/approx_kl` and `ppo/clip_fraction` — high values (KL > 0.05, clip > 0.3)
+  indicate the policy update is too aggressive; lower the LR or clip range.
+* `curriculum/difficulty` — should increase monotonically; long flat
+  stretches mean the ratchet gate is not being met.
+
+## 4. Documentation index
+
+* [Physics derivation](docs/physics_derivation.md)
+* [Controllability analysis](docs/controllability_analysis.md)
+* [Stabilization strategy](docs/stabilization_strategy.md)
+* [Reward history](docs/reward_history.md)
+* [Multi-equilibrium strategy](docs/multi_equilibrium_strategy.md)
+* [Robustness](docs/robustness.md)
+* [Visualization](docs/visualization.md)
+
+## 5. References
+
+1. [PPO paper (Schulman et al., 2017)](https://arxiv.org/abs/1707.06347)
+2. [Generalized Advantage Estimation (Schulman et al., 2016)](https://arxiv.org/abs/1506.02438)
+3. [Underactuated Robotics (Tedrake)](http://underactuated.mit.edu/)
+4. [Gymnasium documentation](https://gymnasium.farama.org/)
