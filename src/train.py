@@ -279,8 +279,13 @@ def train(args: argparse.Namespace) -> None:
         f.write("Update,EnvSteps,Episodes,Reward,Length,Difficulty,G,Friction,Threshold_Deg,"
                 "PolicyLoss,ValueLoss,Entropy,KL,ClipFrac,EV\n")
 
+    # Honour the harness's `EVOLVE_EVAL_DISABLE_TB=1` to skip the TB writer
+    # for runtime measurements (TB filesystem chatter masks PPO timing).
+    tb_disabled = os.environ.get("EVOLVE_EVAL_DISABLE_TB", "0") == "1"
     tb_dir = os.path.join(log_dir, "tb", run_name)
-    writer = SummaryWriter(tb_dir) if SummaryWriter is not None else None
+    writer = (SummaryWriter(tb_dir)
+              if (SummaryWriter is not None and not tb_disabled)
+              else None)
     if writer:
         print(f"[tb]     {tb_dir}")
 
@@ -316,47 +321,83 @@ def train(args: argparse.Namespace) -> None:
     total_episodes = 0
     total_env_steps = 0
 
+    # --- Pre-allocated rollout buffers (candidate-3) -----------------------
+    # The legacy code created per-env Python lists each update and ran
+    # `np.asarray(traj_states[i])` to materialise them. With pre-allocated
+    # (T, N, obs_dim) / (T, N, act_dim) numpy buffers we write directly into
+    # contiguous memory and the post-rollout reshape is essentially free.
+    n_envs_v = int(args.n_envs)
+    T = int(rollout_steps)
+    obs_dim_v = int(state_dim)
+    act_dim_v = int(action_dim)
+    buf_states = np.empty((T, n_envs_v, obs_dim_v), dtype=np.float32)
+    buf_actions = np.empty((T, n_envs_v, act_dim_v), dtype=np.float32)
+    buf_logp = np.empty((T, n_envs_v), dtype=np.float32)
+    buf_rewards = np.empty((T, n_envs_v), dtype=np.float32)
+    buf_dones = np.empty((T, n_envs_v), dtype=bool)
+    # Per-step batched obs (input to the policy forward). Reused each step.
+    obs_stacked = np.empty((n_envs_v, obs_dim_v), dtype=np.float32)
+    # Pre-bind frequently-touched references to local names — avoids a
+    # tower of attribute lookups in the inner loop.
+    n_poles_v = raw_envs[0].n_poles
+    reward_thresh_ref = raw_envs[0].reward_strategy
+    csv_handle = open(csv_path, "a", buffering=1 << 16)
+
     try:
         for update in range(1, total_updates + 1):
             progress = (update - 1) / max(1, total_updates - 1)
 
-            # Per-env trajectory buffers. Storing them separately preserves
-            # temporal adjacency for GAE (interleaving across envs would mix
-            # trajectories and corrupt the advantage estimate).
-            traj_states = [[] for _ in range(args.n_envs)]
-            traj_actions = [[] for _ in range(args.n_envs)]
-            traj_log_probs = [[] for _ in range(args.n_envs)]
-            traj_rewards = [[] for _ in range(args.n_envs)]
-            traj_terminals = [[] for _ in range(args.n_envs)]
+            # ------------------------------------------------------------
+            # Rollout (T steps, N parallel envs).
+            #
+            # Pre-allocated buffer layout (T, N, ...). Writing into a
+            # contiguous numpy array per step avoids the per-env Python
+            # list `.append` followed by `np.asarray(list)` materialise
+            # that dominated the legacy path.
+            # ------------------------------------------------------------
+            for _t in range(T):
+                # Stack current obs into the pre-allocated batch.
+                for i in range(n_envs_v):
+                    obs_stacked[i] = obs_arr[i]
 
-            for _t in range(rollout_steps):
-                obs_batch = np.stack(obs_arr, axis=0)
-                actions, log_probs = agent.select_action(obs_batch, deterministic=False)
+                # Single batched policy forward across all envs.
+                actions, log_probs = agent.select_action(obs_stacked, deterministic=False)
                 if log_probs is None:
-                    log_probs = np.zeros(args.n_envs, dtype=np.float32)
+                    log_probs = np.zeros(n_envs_v, dtype=np.float32)
 
-                for i, w in enumerate(norm_envs):
+                buf_states[_t] = obs_stacked
+                buf_actions[_t] = actions
+                buf_logp[_t] = log_probs
+
+                # Step each env. The Python loop is unavoidable (no vec-env
+                # C extension here) but the batched policy forward above is
+                # the dominant per-step cost — collapsing N forwards into 1
+                # is the big win.
+                for i in range(n_envs_v):
+                    w = norm_envs[i]
                     next_obs, r, term, trunc, _ = w.step(actions[i])
-                    done = bool(term or trunc)
-
-                    traj_states[i].append(obs_arr[i].astype(np.float32))
-                    traj_actions[i].append(actions[i].astype(np.float32))
-                    traj_log_probs[i].append(float(log_probs[i]))
-                    traj_rewards[i].append(float(r))
-                    traj_terminals[i].append(done)
+                    done_flag = bool(term or trunc)
+                    buf_rewards[_t, i] = r
+                    buf_dones[_t, i] = done_flag
 
                     ep_rewards[i] += float(r)
                     ep_lengths[i] += 1
                     total_env_steps += 1
 
-                    theta_errs = [
-                        abs(np.arctan2(np.sin(a - np.pi), np.cos(a - np.pi)))
-                        for a in raw_envs[i].state[1:1 + raw_envs[i].n_poles]
-                    ]
-                    if all(e < raw_envs[i].reward_strategy.reward_threshold for e in theta_errs):
+                    # Time-above-threshold accounting (uses raw env state, not normalised obs).
+                    raw_state = raw_envs[i].state
+                    above = True
+                    for a in raw_state[1:1 + n_poles_v]:
+                        # Same arctan2 wrap as the original — produces the
+                        # same threshold check value.
+                        err = abs(np.arctan2(np.sin(a - np.pi), np.cos(a - np.pi)))
+                        if err >= reward_thresh_ref.reward_threshold:
+                            above = False
+                            break
+                    if above:
                         ep_steps_above[i] += 1
 
-                    if done or ep_lengths[i] >= max_timesteps:
+                    if done_flag or ep_lengths[i] >= max_timesteps:
                         finished_rewards.append(ep_rewards[i])
                         finished_time_above.append(ep_steps_above[i] / max_timesteps)
                         finished_lengths.append(ep_lengths[i])
@@ -375,24 +416,51 @@ def train(args: argparse.Namespace) -> None:
                         w.training = False
                     print(f"[obs_rms] frozen at {total_env_steps} env steps")
 
-            # GAE per env, then concatenate.
-            all_states, all_actions, all_log_probs, all_adv, all_ret = [], [], [], [], []
-            for i in range(args.n_envs):
-                s_i = np.asarray(traj_states[i], dtype=np.float32)
-                a_i = np.asarray(traj_actions[i], dtype=np.float32)
-                lp_i = np.asarray(traj_log_probs[i], dtype=np.float32)
-                r_i = np.asarray(traj_rewards[i], dtype=np.float32)
-                term_i = np.asarray(traj_terminals[i], dtype=bool)
-                last_obs_i = obs_arr[i]
-                adv_i, ret_i = agent.compute_gae(r_i, term_i, s_i, last_state=last_obs_i)
-                all_states.append(s_i); all_actions.append(a_i); all_log_probs.append(lp_i)
-                all_adv.append(adv_i); all_ret.append(ret_i)
+            # ------------------------------------------------------------
+            # GAE — vectorised across envs.
+            #
+            # The legacy path called `agent.compute_gae` once per env, each
+            # call running its own critic forward (N total). We batch all
+            # T*N states through the critic in ONE forward pass, then run
+            # the recurrence per env on the resulting old_values matrix.
+            # ------------------------------------------------------------
+            # Flatten (T, N, obs_dim) -> (T*N, obs_dim) for one critic pass,
+            # then reshape back to (T, N) for the per-env recurrence.
+            with torch.no_grad():
+                flat_states = buf_states.reshape(T * n_envs_v, obs_dim_v)
+                flat_states_t = torch.as_tensor(flat_states, dtype=torch.float32, device=agent.device)
+                flat_values = agent.policy.critic(flat_states_t).squeeze(-1).cpu().numpy().astype(np.float32)
+                old_values = flat_values.reshape(T, n_envs_v)
+                # Bootstrap values at the post-rollout state per env (for non-terminal tails).
+                last_states = np.stack(obs_arr, axis=0).astype(np.float32)
+                last_states_t = torch.as_tensor(last_states, dtype=torch.float32, device=agent.device)
+                last_v = agent.policy.critic(last_states_t).squeeze(-1).cpu().numpy().astype(np.float32)
 
-            states_cat = np.concatenate(all_states, axis=0)
-            actions_cat = np.concatenate(all_actions, axis=0)
-            log_probs_cat = np.concatenate(all_log_probs, axis=0)
-            adv_cat = np.concatenate(all_adv, axis=0)
-            ret_cat = np.concatenate(all_ret, axis=0)
+            # Per-env GAE recurrence (vectorised across envs at each timestep).
+            # advantages[t, i] = delta[t, i] + gamma * lambda * (1 - done[t, i]) * advantages[t+1, i]
+            advantages_v = np.zeros((T, n_envs_v), dtype=np.float32)
+            gae_v = np.zeros(n_envs_v, dtype=np.float32)
+            # Mask: 0 if terminal, 1 otherwise.
+            masks = (~buf_dones).astype(np.float32)
+            # Bootstrap: at the end of the rollout, next_value = last_v unless the
+            # final step was terminal (in which case mask zeroes it out).
+            next_value = last_v.copy()
+            gamma_v = float(agent.gamma)
+            lam_v = float(agent.gae_lambda)
+            for t in range(T - 1, -1, -1):
+                m_t = masks[t]
+                delta = buf_rewards[t] + gamma_v * next_value * m_t - old_values[t]
+                gae_v = delta + gamma_v * lam_v * m_t * gae_v
+                advantages_v[t] = gae_v
+                next_value = old_values[t]
+            returns_v = advantages_v + old_values
+
+            # Flatten and run the PPO update.
+            states_cat = buf_states.reshape(T * n_envs_v, obs_dim_v)
+            actions_cat = buf_actions.reshape(T * n_envs_v, act_dim_v)
+            log_probs_cat = buf_logp.reshape(T * n_envs_v)
+            adv_cat = advantages_v.reshape(T * n_envs_v)
+            ret_cat = returns_v.reshape(T * n_envs_v)
 
             diag = agent.update_from_arrays(
                 states_cat, actions_cat, log_probs_cat, adv_cat, ret_cat,
@@ -448,15 +516,19 @@ def train(args: argparse.Namespace) -> None:
             avg_l = float(np.mean(finished_lengths)) if finished_lengths else 0.0
             avg_t = float(np.mean(time_above_window)) if time_above_window else 0.0
             threshold_deg = float(np.rad2deg(ref_reward_strategy.reward_threshold))
-            with open(csv_path, "a") as f:
-                f.write(
-                    f"{update},{total_env_steps},{total_episodes},{avg_r:.4f},{avg_l:.2f},"
-                    f"{difficulty:.4f},{raw_envs[0].g:.3f},{raw_envs[0].friction_cart:.3f},"
-                    f"{threshold_deg:.2f},"
-                    f"{diag.get('policy_loss', 0):.4f},{diag.get('value_loss', 0):.4f},"
-                    f"{diag.get('entropy', 0):.4f},{diag.get('approx_kl', 0):.4f},"
-                    f"{diag.get('clip_fraction', 0):.4f},{diag.get('explained_variance', 0):.4f}\n"
-                )
+            # Buffered append to the persistent CSV handle. The legacy path
+            # reopened the file every update (open + write + close); on
+            # Windows this dominated wall-time when the per-update wall is
+            # small (cold filesystem entries). One open at start of run +
+            # buffered writes here is far cheaper.
+            csv_handle.write(
+                f"{update},{total_env_steps},{total_episodes},{avg_r:.4f},{avg_l:.2f},"
+                f"{difficulty:.4f},{raw_envs[0].g:.3f},{raw_envs[0].friction_cart:.3f},"
+                f"{threshold_deg:.2f},"
+                f"{diag.get('policy_loss', 0):.4f},{diag.get('value_loss', 0):.4f},"
+                f"{diag.get('entropy', 0):.4f},{diag.get('approx_kl', 0):.4f},"
+                f"{diag.get('clip_fraction', 0):.4f},{diag.get('explained_variance', 0):.4f}\n"
+            )
 
             if writer:
                 writer.add_scalar("rollout/reward_mean", avg_r, total_env_steps)
@@ -521,6 +593,14 @@ def train(args: argparse.Namespace) -> None:
     except KeyboardInterrupt:
         print("[interrupt] saving checkpoint and exiting.")
     finally:
+        # Flush and close the buffered CSV handle before saving the final
+        # checkpoint, so all pending updates are visible on disk if the
+        # process is interrupted later in this finally block.
+        try:
+            csv_handle.flush()
+            csv_handle.close()
+        except Exception:
+            pass
         save_path = os.path.join(log_dir, f"ppo_{run_name}_final.pth")
         agent.save(save_path, extra={"obs_rms": canonical_rms.state_dict()})
         print(f"[done]   final checkpoint: {save_path}")

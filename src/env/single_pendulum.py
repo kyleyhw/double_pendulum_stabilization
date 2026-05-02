@@ -65,20 +65,56 @@ class SinglePendulumCartEnv(CartPendulumBase):
         # Convenience aliases used by the visualiser.
         self.l1 = self.l
 
+        # Allocation-reduction buffers for the 2x2 mass matrix and 2-vector
+        # RHS used by `_dynamics_into`. Float64 pinned to preserve the
+        # bit-equivalence baseline.
+        self._M_mat = np.empty((2, 2), dtype=np.float64)
+        self._RHS = np.empty(2, dtype=np.float64)
+
     def _dynamics(self, state: np.ndarray, force: float) -> np.ndarray:
+        # Backwards-compat wrapper that allocates a fresh return array.
+        out = np.empty(4, dtype=np.float64)
+        self._dynamics_into(state, force, out)
+        return out
+
+    def _dynamics_into(self, state: np.ndarray, force: float,
+                       out: np.ndarray) -> None:
+        r"""In-place form of `_dynamics`. Bit-equivalent to the original.
+
+        See `double_pendulum.DoublePendulumCartEnv._dynamics_into` for the
+        general approach. Per-row scalar arithmetic is preserved verbatim.
+        """
         x, theta, x_dot, theta_dot = state
-        M, m, l, g = self.M, self.m, self.l, self.g
+        M = self.M
+        m = self.m
+        l = self.l
+        g = self.g
 
-        c, s = np.cos(theta), np.sin(theta)
-        M_mat = np.array([[M + m, m * l * c], [m * l * c, m * l ** 2]])
-        # Coriolis vector C(q, qdot) (vector form of C(q, qdot) qdot for this 2-DoF system).
-        C_vec = np.array([-m * l * s * theta_dot ** 2, 0.0])
-        # Gravity G(q) = dV/dq with V = -m g l cos(theta), giving G = [0, m g l sin(theta)].
-        G_vec = np.array([0.0, m * g * l * s])
+        c = np.cos(theta)
+        s = np.sin(theta)
 
-        D_vec = np.array([-self.friction_cart * x_dot, -self.friction_pole * theta_dot])
-        F_vec = np.array([force, 0.0])
+        M_mat = self._M_mat
+        M_mat[0, 0] = M + m
+        M_mat[0, 1] = m * l * c
+        M_mat[1, 0] = m * l * c
+        M_mat[1, 1] = m * l ** 2
 
-        # M qdd + C + G = F + D  =>  qdd = M^{-1}(F + D - C - G)
-        q_dd = np.linalg.solve(M_mat, F_vec + D_vec - C_vec - G_vec)
-        return np.concatenate([[x_dot, theta_dot], q_dd])
+        # Original entries (preserved):
+        #   C = [-m*l*s*theta_dot**2, 0],  G = [0, m*g*l*s]
+        #   D = [-friction_cart*x_dot, -friction_pole*theta_dot]
+        #   F = [force, 0]
+        # Per-row RHS = F + D - C - G.
+        C0 = -m * l * s * theta_dot ** 2
+        G1 = m * g * l * s
+        D0 = -self.friction_cart * x_dot
+        D1 = -self.friction_pole * theta_dot
+
+        RHS = self._RHS
+        RHS[0] = force + D0 - C0  # G0 = 0
+        RHS[1] = D1 - G1          # F1 = 0, C1 = 0
+
+        q_dd = np.linalg.solve(M_mat, RHS)
+        out[0] = x_dot
+        out[1] = theta_dot
+        out[2] = q_dd[0]
+        out[3] = q_dd[1]

@@ -118,6 +118,34 @@ class CartPendulumBase(gym.Env, ABC):
         self.observation_space = self._build_observation_space()
         self.state: np.ndarray = np.zeros(self._state_dim(), dtype=np.float32)
 
+        # --- Pre-allocated work buffers (allocation reduction, candidate-3) ---
+        # Sizes depend on `_state_dim()` and `n_poles` which are well-defined
+        # by the time we get here (subclass set them before super().__init__).
+        sd = self._state_dim()
+        n = self.n_poles
+        # RK4 stage buffers and the mid-state buffer. Float64 is pinned to
+        # match the master baseline trajectory's arithmetic precision.
+        self._k1 = np.empty(sd, dtype=np.float64)
+        self._k2 = np.empty(sd, dtype=np.float64)
+        self._k3 = np.empty(sd, dtype=np.float64)
+        self._k4 = np.empty(sd, dtype=np.float64)
+        self._mid = np.empty(sd, dtype=np.float64)
+        self._new_state = np.empty(sd, dtype=np.float64)
+        # Semi-implicit Euler temporaries.
+        self._si_q_next = np.empty(1 + n, dtype=np.float64)
+        self._si_v_next = np.empty(1 + n, dtype=np.float64)
+        # Observation buffer: layout matches `_get_obs` (x, sins, coss, qdots).
+        self._obs_buf = np.empty(2 + 3 * n, dtype=np.float32)
+        # Cached env-params dict — refreshed only when `g` or `M` changes
+        # (via `set_curriculum`). The strategies treat it read-only.
+        self._env_params_cache: dict[str, Any] = {
+            "dt": self.dt,
+            "velocity_index": 1 + n,
+            "max_force": 5000.0,
+            "g": self.g,
+            "M": self.M,
+        }
+
     # --- subclass-controlled state shape -------------------------------------
 
     def _state_dim(self) -> int:
@@ -164,6 +192,11 @@ class CartPendulumBase(gym.Env, ABC):
             self.wind_std = d * self.wind_max
 
         self.reward_strategy.set_curriculum(d)
+        # Refresh env-params cache so the next step sees the new gravity.
+        # The cache is otherwise stable across steps; only g (and rarely M)
+        # changes during curriculum advancement.
+        self._env_params_cache["g"] = self.g
+        self._env_params_cache["M"] = self.M
         return {
             "g": self.g,
             "friction_cart": self.friction_cart,
@@ -208,7 +241,9 @@ class CartPendulumBase(gym.Env, ABC):
 
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         # 1. Force = control strategy applied to action (and current state).
-        env_params = self._env_params()
+        # Reuse the cached env_params dict — refreshed only on curriculum
+        # changes — instead of allocating a fresh dict per step.
+        env_params = self._env_params_cache
         force = float(self.control_strategy.get_force(action, self.state, env_params))
 
         # 2. Wind + impulse perturbations.
@@ -245,12 +280,66 @@ class CartPendulumBase(gym.Env, ABC):
         Classical 4th-order Runge-Kutta. Not symplectic; energy drifts as
         :math:`\mathcal O(dt^4)` per step but is *not* conserved on long
         chaotic trajectories.
+
+        Buffer-reusing implementation
+        -----------------------------
+        Subclasses may opt in to in-place dynamics by implementing
+        :py:meth:`_dynamics_into(state, force, out)`. When present, RK4
+        writes derivatives directly into pre-allocated stage buffers
+        (:py:attr:`_k1`..`_k4`) and accumulates the update in
+        :py:attr:`_new_state`, avoiding the four allocations the legacy
+        path made per step. The arithmetic is preserved verbatim
+        (state + 0.5*dt*k_i, then state + (dt/6)(k1 + 2 k2 + 2 k3 + k4))
+        so the float64 trajectory is bit-identical to the legacy path.
+
+        Subclasses without `_dynamics_into` fall back to the original
+        allocate-each-stage form for backwards compatibility.
         """
+        if hasattr(self, "_dynamics_into"):
+            return self._rk4_step_inplace(state, force, dt)
+        # Legacy path (unmodified arithmetic).
         k1 = self._dynamics(state, force)
         k2 = self._dynamics(state + 0.5 * dt * k1, force)
         k3 = self._dynamics(state + 0.5 * dt * k2, force)
         k4 = self._dynamics(state + dt * k3, force)
         return state + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+    def _rk4_step_inplace(self, state: np.ndarray, force: float, dt: float) -> np.ndarray:
+        """In-place RK4 stage; requires `_dynamics_into`. See `_rk4_step`."""
+        k1, k2, k3, k4 = self._k1, self._k2, self._k3, self._k4
+        mid = self._mid
+
+        # Stage 1: k1 = f(state)
+        self._dynamics_into(state, force, k1)
+
+        # Stage 2: mid = state + 0.5*dt*k1; k2 = f(mid)
+        # Order of ops matches `state + 0.5 * dt * k1`: numpy evaluates
+        # `0.5 * dt * k1` left-to-right, so `(0.5*dt) * k1` then `state + ...`.
+        np.multiply(k1, 0.5 * dt, out=mid)
+        np.add(mid, state, out=mid)
+        self._dynamics_into(mid, force, k2)
+
+        # Stage 3
+        np.multiply(k2, 0.5 * dt, out=mid)
+        np.add(mid, state, out=mid)
+        self._dynamics_into(mid, force, k3)
+
+        # Stage 4
+        np.multiply(k3, dt, out=mid)
+        np.add(mid, state, out=mid)
+        self._dynamics_into(mid, force, k4)
+
+        # Combine: new = state + (dt/6) * (k1 + 2 k2 + 2 k3 + k4)
+        # Mirror original parenthesisation so float64 rounding is identical.
+        ns = self._new_state
+        np.multiply(k2, 2.0, out=mid)             # mid = 2 k2
+        np.add(k1, mid, out=mid)                  # mid = k1 + 2 k2
+        np.multiply(k3, 2.0, out=ns)              # ns  = 2 k3
+        np.add(mid, ns, out=mid)                  # mid = k1 + 2 k2 + 2 k3
+        np.add(mid, k4, out=mid)                  # mid = k1 + 2 k2 + 2 k3 + k4
+        np.multiply(mid, dt / 6.0, out=ns)
+        np.add(ns, state, out=ns)
+        return ns.copy()
 
     def _semi_implicit_step(self, state: np.ndarray, force: float, dt: float) -> np.ndarray:
         r"""
@@ -268,37 +357,68 @@ class CartPendulumBase(gym.Env, ABC):
         bounding energy drift on long horizons. Faster per step than RK4 (1
         dynamics call) but less accurate locally; useful when long-horizon
         physics fidelity matters more than per-step error.
+
+        Buffer-reusing implementation: the two slices `q_next` and `v_next`
+        are written into pre-allocated buffers and concatenated into
+        `_new_state`. The arithmetic (a = f[n:], v_next = v + dt*a,
+        q_next = q + dt*v_next, concatenate) is unchanged.
         """
         n = self._state_dim() // 2
-        f = self._dynamics(state, force)
-        q = state[:n].copy()
-        v = state[n:].copy()
+        if hasattr(self, "_dynamics_into"):
+            f = self._k1  # reuse k1 as the dynamics output buffer
+            self._dynamics_into(state, force, f)
+        else:
+            f = self._dynamics(state, force)
+
+        # Slice views — copies are still required because state is the
+        # *current* state and we write to internal buffers that may alias.
+        q = state[:n]
+        v = state[n:]
         a = f[n:]
-        v_next = v + dt * a
-        q_next = q + dt * v_next
-        return np.concatenate([q_next, v_next])
+        # v_next = v + dt * a  (compute into _si_v_next)
+        np.multiply(a, dt, out=self._si_v_next)
+        np.add(self._si_v_next, v, out=self._si_v_next)
+        # q_next = q + dt * v_next
+        np.multiply(self._si_v_next, dt, out=self._si_q_next)
+        np.add(self._si_q_next, q, out=self._si_q_next)
+        # Concatenate (single allocation, replacing the original
+        # np.concatenate that allocated a 2N-array each call).
+        ns = self._new_state
+        ns[:n] = self._si_q_next
+        ns[n:] = self._si_v_next
+        return ns.copy()
 
     # --- observation / utility ----------------------------------------------
 
     def _get_obs(self) -> np.ndarray:
+        # Buffer-reusing form: write trig-encoded obs into the pre-allocated
+        # float32 buffer and return a *copy*. The copy preserves the public
+        # contract that the returned array is independent of subsequent
+        # internal mutation (test_observation_constructor_idempotent in
+        # tests/test_pipeline_equivalence.py asserts this).
         n = self.n_poles
-        x = self.state[0]
-        thetas = self.state[1 : 1 + n]
-        qdots = self.state[1 + n :]
-        sins = np.sin(thetas)
-        coss = np.cos(thetas)
-        # Interleave sin/cos -> [x, s1, s2, ..., c1, c2, ..., x_dot, theta_dots]
-        return np.concatenate([[x], sins, coss, qdots]).astype(np.float32)
+        s = self.state
+        buf = self._obs_buf
+        buf[0] = s[0]
+        # sins (positions 1..n) and coss (positions n+1..2n).
+        # Use ufunc with out= to write directly into the buffer; np.sin/np.cos
+        # over a 1-2 element slice has identical float32 result to assigning
+        # element-wise.
+        thetas = s[1 : 1 + n]
+        np.sin(thetas, out=buf[1 : 1 + n])
+        np.cos(thetas, out=buf[1 + n : 1 + 2 * n])
+        # qdots
+        buf[1 + 2 * n : 2 + 3 * n] = s[1 + n :]
+        return buf.copy()
 
     def _env_params(self) -> dict[str, Any]:
-        """Bundle of physics parameters consumed by control and reward strategies."""
-        return {
-            "dt": self.dt,
-            "velocity_index": 1 + self.n_poles,
-            "max_force": 5000.0,
-            "g": self.g,
-            "M": self.M,
-        }
+        """Bundle of physics parameters consumed by control and reward strategies.
+
+        Backwards-compat wrapper that returns the cached dict (used internally
+        by `step`). External callers should treat the returned dict as
+        read-only.
+        """
+        return self._env_params_cache
 
     def apply_impulse(self, force: float) -> None:
         """Apply a single-step impulsive force (added to the next ``step``)."""

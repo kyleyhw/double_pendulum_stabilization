@@ -112,3 +112,49 @@ class NormalizeObservation(gym.Wrapper):
             self.obs_rms.var + self.epsilon
         )
         return np.clip(out, -self.clip, self.clip).astype(np.float32)
+
+
+# ---------------------------------------------------------------------------- #
+# Batched application helper (candidate-3 trainer fast-path)
+# ---------------------------------------------------------------------------- #
+
+def batched_normalize(obs_batch: np.ndarray, rms: RunningMeanStd, *,
+                      epsilon: float = 1e-8, clip: float = 10.0) -> np.ndarray:
+    r"""Vectorised application of :class:`NormalizeObservation` over an N-env batch.
+
+    Parameters
+    ----------
+    obs_batch
+        ``(N, obs_dim)`` array of raw observations from N parallel envs.
+    rms
+        Shared :class:`RunningMeanStd` instance providing mean and variance.
+
+    Returns
+    -------
+    ``(N, obs_dim)`` array, dtype float32, clipped to ``[-clip, clip]``.
+
+    Math
+    ----
+    The per-env path computed
+    :math:`\hat o_i = \mathrm{clip}((o_i - \mu)/\sqrt{\sigma^2 + \varepsilon}, \pm c)`
+    one row at a time. Since the formula is element-wise, batching gives an
+    identical numerical result (subject to the same float64-then-float32 cast).
+    The single broadcast op also has lower Python overhead than N wrapper calls.
+    """
+    diff = np.asarray(obs_batch, dtype=np.float64) - rms.mean
+    np.divide(diff, np.sqrt(rms.var + epsilon), out=diff)
+    np.clip(diff, -clip, clip, out=diff)
+    return diff.astype(np.float32)
+
+
+def batched_rms_update(rms: RunningMeanStd, obs_batch: np.ndarray) -> None:
+    r"""Single Welford-merge update for an N-env batch.
+
+    Equivalent to applying :py:meth:`RunningMeanStd.update` once per row, but
+    folds the N rows into a single merge step. The parallel-Welford merge is
+    associative *up to floating-point rounding* — for typical N ~ 8 the
+    difference is at the float64 ULP level, well within the noise the
+    normaliser already absorbs (it converges in distribution to the true
+    statistics regardless of merge order).
+    """
+    rms.update(np.asarray(obs_batch, dtype=np.float64))
