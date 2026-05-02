@@ -79,10 +79,15 @@ class SinglePendulumCartEnv(CartPendulumBase):
 
     def _dynamics_into(self, state: np.ndarray, force: float,
                        out: np.ndarray) -> None:
-        r"""In-place form of `_dynamics`. Bit-equivalent to the original.
+        r"""In-place form of `_dynamics`.
 
-        See `double_pendulum.DoublePendulumCartEnv._dynamics_into` for the
-        general approach. Per-row scalar arithmetic is preserved verbatim.
+        Squaring convention
+        -------------------
+        Velocity-squared terms use explicit ``x * x`` rather than ``x ** 2``
+        so the scalar path is bit-identical to
+        :py:meth:`dynamics_into_batched` — see
+        :py:meth:`DoublePendulumCartEnv._dynamics_into` docstring for the
+        details.
         """
         x, theta, x_dot, theta_dot = state
         M = self.M
@@ -97,14 +102,12 @@ class SinglePendulumCartEnv(CartPendulumBase):
         M_mat[0, 0] = M + m
         M_mat[0, 1] = m * l * c
         M_mat[1, 0] = m * l * c
-        M_mat[1, 1] = m * l ** 2
+        # ``l ** 2`` is a parse-time Python-float constant; bit-equal to
+        # the batched form. Velocity-squared uses explicit ``x * x``.
+        M_mat[1, 1] = m * l * l
 
-        # Original entries (preserved):
-        #   C = [-m*l*s*theta_dot**2, 0],  G = [0, m*g*l*s]
-        #   D = [-friction_cart*x_dot, -friction_pole*theta_dot]
-        #   F = [force, 0]
         # Per-row RHS = F + D - C - G.
-        C0 = -m * l * s * theta_dot ** 2
+        C0 = -m * l * s * theta_dot * theta_dot
         G1 = m * g * l * s
         D0 = -self.friction_cart * x_dot
         D1 = -self.friction_pole * theta_dot
@@ -118,3 +121,58 @@ class SinglePendulumCartEnv(CartPendulumBase):
         out[1] = theta_dot
         out[2] = q_dd[0]
         out[3] = q_dd[1]
+
+    @staticmethod
+    def dynamics_into_batched(
+        states: np.ndarray,
+        forces: np.ndarray,
+        out: np.ndarray,
+        *,
+        M_cart: float,
+        m: float,
+        l: float,
+        g: float,
+        friction_cart: float,
+        friction_pole: float,
+        M_buf: np.ndarray,
+        RHS_buf: np.ndarray,
+    ) -> None:
+        r"""
+        Batched in-place dynamics for N envs (single-pendulum).
+
+        Same approach as :py:meth:`DoublePendulumCartEnv.dynamics_into_batched` —
+        per-row arithmetic mirrors the unbatched `_dynamics_into` exactly, and
+        `np.linalg.solve` on a `(N, 2, 2)` batch is per-row bit-equivalent to N
+        sequential `np.linalg.solve` calls.
+        """
+        x_dot = states[:, 2]
+        theta_dot = states[:, 3]
+        theta = states[:, 1]
+
+        c = np.cos(theta)
+        s = np.sin(theta)
+
+        # Mass matrix. ``l ** 2`` is a parse-time Python-float constant.
+        M_buf[:, 0, 0] = M_cart + m
+        M_buf[:, 0, 1] = m * l * c
+        M_buf[:, 1, 0] = m * l * c
+        M_buf[:, 1, 1] = m * l * l
+
+        # RHS components — velocity-squared uses ``x * x`` to match the
+        # unbatched scalar path bit-for-bit.
+        C0 = -m * l * s * theta_dot * theta_dot
+        G1 = m * g * l * s
+        D0 = -friction_cart * x_dot
+        D1 = -friction_pole * theta_dot
+
+        # RHS_buf shape (N, 2, 1) for the gufunc-stacked-vector form.
+        RHS_buf[:, 0, 0] = forces + D0 - C0  # G0 = 0
+        RHS_buf[:, 1, 0] = D1 - G1           # F1 = C1 = 0
+
+        # Batched solve. With bit-identical inputs to the unbatched scalar
+        # path (achieved via the ``x * x`` rewrite), the batched gufunc
+        # solve is per-row bit-equal to N scalar solves.
+        q_dd = np.linalg.solve(M_buf, RHS_buf)  # (N, 2, 1)
+        out[:, 0] = x_dot
+        out[:, 1] = theta_dot
+        out[:, 2:4] = q_dd[:, :, 0]
