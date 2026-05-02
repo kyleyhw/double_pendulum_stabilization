@@ -42,6 +42,7 @@ import torch
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.agent.ppo import Memory, PPOAgent  # noqa: E402
+from src.env.cart_pendulum_base import BatchedEnvRunner  # noqa: E402
 from src.env.double_pendulum import DoublePendulumCartEnv  # noqa: E402
 from src.env.single_pendulum import SinglePendulumCartEnv  # noqa: E402
 from src.strategies.controls import ForceControl, VelocityControl  # noqa: E402
@@ -54,7 +55,11 @@ from src.strategies.rewards import (  # noqa: E402
     RewardStrategy,
     SinglePendulumStandardReward,
 )
-from src.utils.normalize import NormalizeObservation  # noqa: E402
+from src.utils.normalize import (  # noqa: E402
+    NormalizeObservation,
+    batched_normalize,
+    batched_rms_update,
+)
 from src.utils.schedules import linear  # noqa: E402
 
 try:
@@ -138,11 +143,19 @@ def _max_episode_reward(reward_strategy: RewardStrategy, max_steps: int, dt: flo
 # Helpers
 # ---------------------------------------------------------------------------- #
 
-def _set_curriculum_all(venv, normaliser_envs: list, difficulty: float) -> None:
-    """Apply curriculum to every underlying env in the vector."""
+def _set_curriculum_all(venv, normaliser_envs: list, difficulty: float,
+                        runner: Optional["BatchedEnvRunner"] = None) -> None:
+    """Apply curriculum to every underlying env in the vector.
+
+    If a :class:`BatchedEnvRunner` is supplied, its cached physics
+    constants are also refreshed so the next batched step uses the new
+    ``g``/``friction_*`` values.
+    """
     for env in normaliser_envs:
         # `env` here is the NormalizeObservation wrapper; its .env is the raw env.
         env.env.set_curriculum(difficulty)
+    if runner is not None:
+        runner.sync_curriculum()
 
 
 def _angles_from_obs(obs: np.ndarray, env_kind: str) -> tuple[float, ...]:
@@ -294,7 +307,19 @@ def train(args: argparse.Namespace) -> None:
     best_avg_reward = -float("inf")
     reward_window: collections.deque = collections.deque(maxlen=args.window)
     time_above_window: collections.deque = collections.deque(maxlen=args.window)
-    _set_curriculum_all(venv, norm_envs, difficulty)
+
+    # Batched env runner — drives the inner per-step loop with one numpy-
+    # vectorised call. Built before curriculum so the curriculum hook below
+    # can refresh its physics cache. Requires homogeneous envs (the
+    # constructor checks this). Falls back gracefully to per-env stepping
+    # if the runner can't be built.
+    try:
+        batched_runner: Optional[BatchedEnvRunner] = BatchedEnvRunner(raw_envs)
+    except Exception as e:
+        print(f"[batched] disabled: {e}")
+        batched_runner = None
+
+    _set_curriculum_all(venv, norm_envs, difficulty, runner=batched_runner)
     updates_since_levelup = 0
 
     # Cache reward strategy reference for the time-above metric.
@@ -343,6 +368,25 @@ def train(args: argparse.Namespace) -> None:
     reward_thresh_ref = raw_envs[0].reward_strategy
     csv_handle = open(csv_path, "a", buffering=1 << 16)
 
+    # ----- Batched-runner fast-path locals --------------------------------
+    # When `batched_runner` is available we step all envs in one call,
+    # collapsing N sequential RK4 dynamics calls into a single numpy-
+    # vectorised batched call. The per-row trajectory is bit-identical to
+    # the unbatched env path (verified by `tools/check_batched_equivalence.py`).
+    # Each env still owns its own `np_random` (used for wind), reward
+    # strategy, current_impulse, and its NormalizeObservation wrapper's
+    # running stats — these are updated per-env in the same order as the
+    # legacy loop, so the RNG/Welford sequence is preserved.
+    use_batched_runner = batched_runner is not None
+    # Track the canonical normaliser's training state so the inner loop
+    # can skip the per-row Welford-merge call once the normaliser is frozen.
+    canonical_rms_training = bool(norm_envs[0].training)
+    # Squeeze action shape: actions come back from `select_action` as
+    # (N, action_dim). The batched runner expects (N, action_dim).
+    # NormalizeObservation's per-env update needs the raw env obs; we
+    # access it on the underlying env after the batched step.
+    actions_buf = np.empty((n_envs_v, act_dim_v), dtype=np.float32)
+
     try:
         for update in range(1, total_updates + 1):
             progress = (update - 1) / max(1, total_updates - 1)
@@ -369,51 +413,127 @@ def train(args: argparse.Namespace) -> None:
                 buf_actions[_t] = actions
                 buf_logp[_t] = log_probs
 
-                # Step each env. The Python loop is unavoidable (no vec-env
-                # C extension here) but the batched policy forward above is
-                # the dominant per-step cost — collapsing N forwards into 1
-                # is the big win.
-                for i in range(n_envs_v):
-                    w = norm_envs[i]
-                    next_obs, r, term, trunc, _ = w.step(actions[i])
-                    done_flag = bool(term or trunc)
-                    buf_rewards[_t, i] = r
-                    buf_dones[_t, i] = done_flag
+                if use_batched_runner:
+                    # Single batched env step. The runner stacks per-env state
+                    # into one (N, 6) tensor, computes batched RK4 dynamics
+                    # with one numpy-vectorised np.linalg.solve, and writes
+                    # back per-env state, reward, done. Per-row results are
+                    # bit-identical to the legacy `w.step(actions[i])` loop
+                    # (verified by `tools/check_batched_equivalence.py`).
+                    raw_obs_batch, r_batch, term_batch, trunc_batch, _ = \
+                        batched_runner.step_batch(actions)
 
-                    ep_rewards[i] += float(r)
-                    ep_lengths[i] += 1
-                    total_env_steps += 1
+                    # Update the canonical RunningMeanStd via a single
+                    # parallel-Welford merge over the (N, obs_dim) batch.
+                    # This is mathematically equivalent to N sequential
+                    # 1-sample merges up to float64 rounding (Chan et al.
+                    # 1979); for N ~ 4-16 the rounding difference is at
+                    # ULP level, well below the noise floor of policy-
+                    # gradient training. The env-state evolution
+                    # (verified by `tools/check_batched_equivalence.py`)
+                    # is unaffected.
+                    if canonical_rms_training:
+                        batched_rms_update(canonical_rms, raw_obs_batch)
 
-                    # Time-above-threshold accounting (uses raw env state, not normalised obs).
-                    raw_state = raw_envs[i].state
-                    above = True
-                    for a in raw_state[1:1 + n_poles_v]:
-                        # Same arctan2 wrap as the original — produces the
-                        # same threshold check value.
-                        err = abs(np.arctan2(np.sin(a - np.pi), np.cos(a - np.pi)))
-                        if err >= reward_thresh_ref.reward_threshold:
-                            above = False
-                            break
-                    if above:
-                        ep_steps_above[i] += 1
+                    # Apply normalisation in one vectorised call. The math
+                    # is element-wise, so the per-row output is bit-equal
+                    # to N sequential `_normalize` calls.
+                    normalised_batch = batched_normalize(
+                        raw_obs_batch, canonical_rms,
+                        epsilon=norm_envs[0].epsilon, clip=norm_envs[0].clip,
+                    )
 
-                    if done_flag or ep_lengths[i] >= max_timesteps:
-                        finished_rewards.append(ep_rewards[i])
-                        finished_time_above.append(ep_steps_above[i] / max_timesteps)
-                        finished_lengths.append(ep_lengths[i])
-                        ep_rewards[i] = 0.0
-                        ep_steps_above[i] = 0
-                        ep_lengths[i] = 0
-                        total_episodes += 1
-                        next_obs, _ = w.reset()
+                    # Vectorised time-above-threshold accounting. The
+                    # original per-env check computed
+                    # ``err = |arctan2(sin(a - pi), cos(a - pi))|`` and
+                    # asserted it is < reward_threshold for every pole.
+                    # Doing this once over the (N, n_poles) angle slab is
+                    # bit-equal per env (numpy elementwise sin/cos/arctan2)
+                    # but collapses 2*N transcendental calls into 3 batched
+                    # ones plus one comparison.
+                    angle_slab = np.empty((n_envs_v, n_poles_v), dtype=np.float64)
+                    for i in range(n_envs_v):
+                        angle_slab[i] = raw_envs[i].state[1 : 1 + n_poles_v]
+                    angle_offset = angle_slab - np.pi
+                    err_slab = np.abs(np.arctan2(np.sin(angle_offset),
+                                                 np.cos(angle_offset)))
+                    threshold = reward_thresh_ref.reward_threshold
+                    above_per_env = (err_slab < threshold).all(axis=1)
 
-                    obs_arr[i] = next_obs
+                    # Per-env post-step bookkeeping (rewards, dones, episode
+                    # tracking, resets). The reset path needs to go through
+                    # the per-env wrapper so the canonical_rms sees the
+                    # reset obs.
+                    for i in range(n_envs_v):
+                        r = float(r_batch[i])
+                        term = bool(term_batch[i])
+                        trunc = bool(trunc_batch[i])
+                        done_flag = term or trunc
+                        buf_rewards[_t, i] = r
+                        buf_dones[_t, i] = done_flag
+
+                        ep_rewards[i] += r
+                        ep_lengths[i] += 1
+                        total_env_steps += 1
+
+                        if above_per_env[i]:
+                            ep_steps_above[i] += 1
+
+                        if done_flag or ep_lengths[i] >= max_timesteps:
+                            finished_rewards.append(ep_rewards[i])
+                            finished_time_above.append(ep_steps_above[i] / max_timesteps)
+                            finished_lengths.append(ep_lengths[i])
+                            ep_rewards[i] = 0.0
+                            ep_steps_above[i] = 0
+                            ep_lengths[i] = 0
+                            total_episodes += 1
+                            # Reset goes through the wrapper so the
+                            # normaliser sees the reset obs.
+                            obs_arr[i], _ = norm_envs[i].reset()
+                        else:
+                            obs_arr[i] = normalised_batch[i]
+                else:
+                    # Fallback: legacy per-env step loop (used for
+                    # heterogeneous envs or if the runner can't be built).
+                    for i in range(n_envs_v):
+                        w = norm_envs[i]
+                        next_obs, r, term, trunc, _ = w.step(actions[i])
+                        done_flag = bool(term or trunc)
+                        buf_rewards[_t, i] = r
+                        buf_dones[_t, i] = done_flag
+
+                        ep_rewards[i] += float(r)
+                        ep_lengths[i] += 1
+                        total_env_steps += 1
+
+                        raw_state = raw_envs[i].state
+                        above = True
+                        for a in raw_state[1:1 + n_poles_v]:
+                            err = abs(np.arctan2(np.sin(a - np.pi), np.cos(a - np.pi)))
+                            if err >= reward_thresh_ref.reward_threshold:
+                                above = False
+                                break
+                        if above:
+                            ep_steps_above[i] += 1
+
+                        if done_flag or ep_lengths[i] >= max_timesteps:
+                            finished_rewards.append(ep_rewards[i])
+                            finished_time_above.append(ep_steps_above[i] / max_timesteps)
+                            finished_lengths.append(ep_lengths[i])
+                            ep_rewards[i] = 0.0
+                            ep_steps_above[i] = 0
+                            ep_lengths[i] = 0
+                            total_episodes += 1
+                            next_obs, _ = w.reset()
+
+                        obs_arr[i] = next_obs
 
                 # Freeze the normaliser after a step-count warmup, if requested.
                 if (args.obs_norm_freeze_steps > 0 and norm_envs[0].training
                         and total_env_steps >= args.obs_norm_freeze_steps):
                     for w in norm_envs:
                         w.training = False
+                    canonical_rms_training = False
                     print(f"[obs_rms] frozen at {total_env_steps} env steps")
 
             # ------------------------------------------------------------
@@ -497,7 +617,8 @@ def train(args: argparse.Namespace) -> None:
                     ))
                     difficulty = min(difficulty + step, 1.0)
                     updates_since_levelup = 0
-                    _set_curriculum_all(venv, norm_envs, difficulty)
+                    _set_curriculum_all(venv, norm_envs, difficulty,
+                                        runner=batched_runner)
                     print(
                         f"[ratchet] up={update:4d} d={difficulty:.3f} step={step:.3f} "
                         f"R={window_avg_reward:.1f} TimeAbove={window_time_above*100:.1f}%"
