@@ -94,8 +94,15 @@ DEFAULTS: dict[str, Any] = {
     "integrator": "rk4",
     "n_envs": 8,
     "rollout_steps": 512,
-    "updates": 500,
+    # Round-1 lesson: 500 from-scratch updates can't separate configs (too
+    # short for anyone to break swing-up). Round 2+ defaults to continuing
+    # from the Phase L best for 200 updates — sharp signal on whether HP
+    # perturbations push past the existing 4-7% ceiling.
+    "updates": 200,
     "episode_steps": 4000,
+    "load": "logs/ppo_double_velocity_hybrid_20260503_000503_best.pth",
+    "start_difficulty": 0.465,
+    "obs_norm_freeze_steps": 0,
     "lr": 3e-4,
     "lr_final_frac": 0.1,
     "gamma": 0.99,
