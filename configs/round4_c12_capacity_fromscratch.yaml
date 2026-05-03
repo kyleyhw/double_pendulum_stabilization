@@ -1,0 +1,26 @@
+# Round 4 candidate 12: from-scratch with intermediate hidden_dim (256 -> 384).
+# Phase G's parting diagnosis flagged capacity, but R1 c3 showed hidden_dim=512
+# combined with tight init_log_std and bumped q_theta traps the policy. This
+# candidate isolates the capacity bump (256 -> 384, a more conservative step)
+# while keeping init_log_std=-0.5 and q_theta=0.2 (proven defaults). 800 updates.
+load: null
+start_difficulty: 0.0
+obs_norm_freeze_steps: -1
+updates: 800
+reward: hybrid
+threshold_curve: concave
+n_envs: 8
+rollout_steps: 512
+lr: 3.0e-4
+target_kl: 0.015
+value_clip: 0.2
+eps_clip: 0.2
+entropy_coef: 0.01
+init_log_std: -0.5
+hidden_dim: 384      # 1.5x default
+minibatch_size: 256
+seed: 0
+best_fallback_threshold: 0.5
+best_fallback_patience: 3
+best_fallback_save: true
+eval_every: 50

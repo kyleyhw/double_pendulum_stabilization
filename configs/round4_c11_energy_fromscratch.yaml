@@ -1,0 +1,26 @@
+# Round 4 candidate 11: from-scratch with energy-shaping reward (vs H3 hybrid).
+# Phase B used energy reward to break out of the down-rest basin during early
+# training; round 3 c9 showed energy reward is the smallest regression on a
+# pre-trained policy (and improved SSE pole 2). This candidate tests whether
+# energy-shaping from scratch produces a competitive policy in 800 updates.
+load: null
+start_difficulty: 0.0
+obs_norm_freeze_steps: -1
+updates: 800
+reward: energy
+threshold_curve: concave
+n_envs: 8
+rollout_steps: 512
+lr: 3.0e-4
+target_kl: 0.015
+value_clip: 0.2
+eps_clip: 0.2
+entropy_coef: 0.01
+init_log_std: -0.5
+hidden_dim: 256
+minibatch_size: 256
+seed: 0
+best_fallback_threshold: 0.5
+best_fallback_patience: 3
+best_fallback_save: true
+eval_every: 50

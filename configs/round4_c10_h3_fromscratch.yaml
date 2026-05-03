@@ -1,0 +1,26 @@
+# Round 4 candidate 10: H3-default from scratch (anchor for the from-scratch
+# methodology). 800 updates; all other knobs at the proven Phase H3 defaults.
+# This establishes what "no structural change, just from-scratch + longer
+# budget" achieves on the optimised pipeline. Round 4-8 candidates with
+# structural changes are scored against this anchor.
+load: null
+start_difficulty: 0.0
+obs_norm_freeze_steps: -1
+updates: 800
+reward: hybrid
+threshold_curve: concave
+n_envs: 8
+rollout_steps: 512
+lr: 3.0e-4
+target_kl: 0.015
+value_clip: 0.2
+eps_clip: 0.2
+entropy_coef: 0.01
+init_log_std: -0.5
+hidden_dim: 256
+minibatch_size: 256
+seed: 0
+best_fallback_threshold: 0.5
+best_fallback_patience: 3
+best_fallback_save: true
+eval_every: 50

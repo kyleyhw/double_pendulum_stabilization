@@ -149,10 +149,15 @@ def _load_config(path: str | None) -> dict[str, Any]:
 
 
 def _build_train_argv(config: dict[str, Any]) -> list[str]:
-    """Translate a flat config dict into the CLI argv for ``src/train.py``."""
+    """Translate a flat config dict into the CLI argv for ``src/train.py``.
+
+    None / empty-string values are dropped (used to suppress a default
+    flag, e.g. ``load: null`` for from-scratch runs).
+    """
     argv = [sys.executable, str(REPO_ROOT / "src" / "train.py")]
     for k, v in config.items():
-        # Boolean flags are presence-only.
+        if v is None or v == "":
+            continue
         if isinstance(v, bool):
             if v:
                 argv.append(f"--{k}")
