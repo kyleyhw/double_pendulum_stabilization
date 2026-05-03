@@ -1,82 +1,83 @@
-# agent-evolve manifest for the cart-pendulum runtime optimisation.
+# agent-evolve manifest — algorithm campaign (post runtime PRs #1, #2).
 #
-# Goal: ≥3× speedup on the training/test pipeline wall-time, without changing
-# physics. The bit-equivalence gate (`tests/test_pipeline_equivalence.py`)
-# enforces "physics-identical" at the byte level. The standard physics tests
-# (`test_physics.py`, `test_components.py`, `test_energy_reward.py`) enforce
-# behavioural correctness above and beyond bit-equivalence.
+# Goal: find a training-parameter / algorithmic configuration that breaks the
+# 4-7% strict-success ceiling at d ~ 0.45 documented across Phases C/E/F/G/H3/I.
+# Pipeline runtime work is complete (PR #1: 5.77x; PR #2: +1.43x). This
+# campaign keeps physics bit-identical and lets candidates mutate PPO HPs,
+# reward weights, curriculum schedules, network architecture, and the
+# training scale. Each candidate runs a 500-update training fragment from
+# scratch and is scored on policy quality at the difficulty it reached.
 version: 1
 
 problem:
   description: >-
-    Optimise the cart-pendulum PPO training and test pipeline for runtime.
-    Preserve physics bit-identically (gate: tests/test_pipeline_equivalence.py)
-    and behaviourally (gates: tests/test_physics.py, tests/test_components.py,
-    tests/test_energy_reward.py).
-  mode: runtime
-  # Eval harness writes a single JSON object on stdout with metrics:
-  #   env_step_ms_mean       — env step microbenchmark (lower is better)
-  #   train_update_ms_mean   — PPO update wall-time (lower is better; PRIMARY)
-  #   test_pass_rate         — fraction of tests passing (must be 1.0)
-  #   total_eval_ms          — composite (lower is better)
-  #   all_gates_passed       — 1.0 if test_pass_rate == 1.0 and train returncode 0
-  eval_command: "python tools/evolve_eval.py --updates 5 --n_envs 4 --rollout_steps 256"
-  expected_baseline_tolerance: 0.10
+    Find a training-parameter configuration that breaks the 4-7% strict-success
+    ceiling at d ~ 0.45 on the cart-double-pendulum hybrid-reward task. Each
+    candidate runs a 500-update training from scratch and is evaluated by
+    deterministic 30-episode eval at the peak difficulty reached. Physics
+    bit-equivalence must be preserved (gate: tests/test_pipeline_equivalence.py).
+  mode: algorithm
+  eval_command: "python tools/algorithm_eval.py"
+  expected_baseline_tolerance: 0.20
   metrics:
-    - name: train_update_ms_mean
-      optimise: minimize
+    - name: strict_success_rate
+      optimise: maximize
       primary: true
-    - name: env_step_ms_mean
-      optimise: minimize
-    - name: test_pass_rate
+    - name: loose_success_rate
       optimise: maximize
-      minimum: 1.0           # hard gate: any test failure → reject
-    - name: all_gates_passed
+    - name: peak_difficulty
       optimise: maximize
-      minimum: 1.0
+    - name: physics_tests_pass
+      optimise: maximize
+      minimum: 1.0    # hard gate: any test failure rejects
+    - name: train_completed
+      optimise: maximize
+      minimum: 1.0    # hard gate: training subprocess must succeed
 
 scope:
-  # Files candidates are allowed to mutate. Anything outside this set
-  # triggers a scope violation and immediate prune.
+  # Files candidates are allowed to mutate. Reward formulas, schedules,
+  # network architecture, training-loop logic — all on the table. Env
+  # dynamics are NOT (would break the bit-equivalence gate).
   target_files:
-    - src/env/cart_pendulum_base.py
-    - src/env/double_pendulum.py
-    - src/env/single_pendulum.py
-    - src/env/double_pendulum_goal.py
     - src/agent/ppo.py
     - src/train.py
-    - src/utils/normalize.py
     - src/strategies/rewards.py
     - src/strategies/controls.py
+    - src/utils/normalize.py
+    - src/utils/schedules.py
+    - configs/                    # candidates write their own HP configs here
 
-  # Hard "do not touch" — physics correctness anchors and the eval harness
-  # itself. Mutating these would either invalidate the comparison or break
-  # the supervisor's ability to score candidates.
   do_not_touch:
     - tests/test_physics.py
     - tests/test_components.py
     - tests/test_energy_reward.py
     - tests/test_pipeline_equivalence.py
     - tools/evolve_eval.py
+    - tools/algorithm_eval.py
+    - tools/check_batched_equivalence.py
     - agent-evolve.yaml
     - docs/physics_derivation.md
     - PROJECT_PLAN.md
+    # Env dynamics are immutable — physics must stay bit-identical to the
+    # baseline trajectory hashes.
+    - src/env/cart_pendulum_base.py
+    - src/env/double_pendulum.py
+    - src/env/single_pendulum.py
+    - src/env/double_pendulum_goal.py
 
 evolution:
-  # Round 1 (explore): three orthogonal candidates attacking env / trainer /
-  # full-stack — c3 won at 5.77x. Round 2 (mutate): three candidates
-  # mutating the c3 winner (now merged into master), targeting the residual
-  # 3x3 np.linalg.solve and the still-Python-level rollout loop.
-  rounds: 2
+  # Eight rounds of three candidates each (24 candidates total).
+  # Round 1 is forced to `explore` (no frontier yet). Subsequent rounds
+  # alternate mutate / crossover / explore per the supervisor's Phase B
+  # heuristic.
+  rounds: 8
   candidates_per_round: 3
-  operators: [explore, mutate]
-  prune_strategy: pareto
+  operators: [explore, mutate, crossover]
+  prune_strategy: top_k        # primary metric is strict_success_rate
 
 runtime_mode:
-  # Equivalence is enforced via the test suite (test_pipeline_equivalence.py),
-  # which is more thorough than the framework's property-based check for
-  # this stateful, multi-output env. So the framework-level check is
-  # disabled and the gate is the test_pass_rate metric.
+  # The algorithm-eval harness calls into the test suite directly; the
+  # framework's property-based equivalence check is redundant.
   equivalence_check: disabled
   property_test_samples: 0
 
@@ -85,7 +86,7 @@ safety:
   agents_can_merge: false
   require_human_approval: true
   branch_cleanup: archive
-  run_ablation_report: false  # ablation pass is expensive; skip on the first round.
+  run_ablation_report: false
 
 backend:
   type: local
