@@ -63,13 +63,13 @@ scope:
     - PROJECT_PLAN.md
 
 evolution:
-  # One round of three orthogonal candidates is sufficient for an
-  # incremental optimisation pass — each candidate attacks a distinct layer
-  # of the pipeline. If a candidate doesn't break the ≥3× bar, we can run
-  # additional rounds compounding on the winner.
-  rounds: 1
+  # Round 1 (explore): three orthogonal candidates attacking env / trainer /
+  # full-stack — c3 won at 5.77x. Round 2 (mutate): three candidates
+  # mutating the c3 winner (now merged into master), targeting the residual
+  # 3x3 np.linalg.solve and the still-Python-level rollout loop.
+  rounds: 2
   candidates_per_round: 3
-  operators: [explore]
+  operators: [explore, mutate]
   prune_strategy: pareto
 
 runtime_mode:
