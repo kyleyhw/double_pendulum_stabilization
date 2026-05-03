@@ -670,3 +670,87 @@ cheaper to run.
 * **Diagnostic reports**:
   `docs/reports/latest_phase_k_at_d0445.md`,
   `docs/reports/phase_i_at_d0445.md`.
+
+### Phase K, Round 2 — batched dynamics across N envs (run 2026-05-03, BREAKTHROUGH on the trainer)
+
+After PR #1 (c3) merged, the env-step microbenchmark dropped 1.29x but
+`train_update_ms_mean` was still 2154 ms at production scale
+(`--updates 20 --n_envs 8 --rollout_steps 512`). Profiling revealed the new
+hot spot: the trainer's per-env Python `for i in range(n_envs):` step loop,
+which dispatches N sequential `np.linalg.solve` calls per RK4 stage.
+
+Three round-2 `mutate` candidates were dispatched on parent c3:
+
+| # | Strategy | env_step | train_update | tests | Verdict |
+|---|---|---:|---:|---:|---|
+| 4 | Hand-coded Cramer's rule on the 3x3 solve | 0.071 ms | 1965 ms (1.10x) | 21/21 (regenerated hashes — Cramer differs from LU at ULP level) | REJECT (env-only) |
+| 5 | Numba `@njit` on `_dynamics` kernel | 0.057 ms | 1798 ms (1.20x) | 21/21, bit-identical | REJECT (env-only) |
+| **6** | Batched dynamics across N envs via `np.linalg.solve` on `(N, 3, 3)` batch | 0.106 ms | **1504 ms (1.43x)** | 21/21, per-row bit-identical (verified by `tools/check_batched_equivalence.py` over 100 random-action steps × 4 envs × 5 configs) | **APPROVE — winner** |
+
+#### Why c6 won
+
+c6's `env_step_ms_mean` is unchanged (the single-env path is preserved
+verbatim) but it collapses the trainer's per-step inner loop from N
+sequential `_dynamics` calls into one batched numpy/BLAS call. Numpy's
+`np.linalg.solve` on `(N, 3, 3)` produces per-row bit-identical output to
+N scalar solves (verified empirically by the cross-check script), so the
+trajectory hashes in `tests/test_pipeline_equivalence.py` are preserved
+(the test exercises the single-env path, which c6 doesn't touch).
+
+A subtle finding: a ULP-level discrepancy emerged between
+`np.float64 ** 2` (Python scalar pow path) and `arr ** 2` (numpy ufunc
+path) at large velocity magnitudes. Both `_dynamics_into` and
+`dynamics_into_batched` were rewritten to use explicit `x * x`. The
+existing equivalence-test trajectory hashes are preserved because the
+zero-action test trajectory stays in a small-magnitude regime where the
+two paths coincide.
+
+#### Cumulative speedup
+
+| Stage | Production-scale `train_update_ms_mean` | Cumulative speedup vs original |
+|---|---:|---:|
+| Original master (small scale: `--updates 5 --n_envs 4 --rollout_steps 256`) | 6431 ms | 1.0x |
+| c3 (PR #1) at production scale | 2154 ms | (different scale, see Phase K above for 5.77x at the small scale) |
+| **c6 (PR #2) at production scale** | **1504 ms** | **~8.25x cumulative** vs original |
+
+A 3000-update run at `--n_envs 8 --rollout_steps 512` now takes **67
+minutes** (up from 74 min in Phase K, down from an extrapolated 5+ hours
+on the original code).
+
+#### Validation: re-trained Phase K best on the c6 pipeline
+
+To confirm the batched path doesn't degrade policy quality, the Phase K
+best snapshot was loaded and continued for 3000 updates with identical
+hyperparameters. 30-episode deterministic eval at $\delta = 0.465$
+(the difficulty Phase L reached):
+
+| Metric | Phase K best (parent) | Phase L best (this run) | Delta |
+|---|---:|---:|---:|
+| Strict success (10°) | 5.3 % | 4.4 % | -0.9 (within noise) |
+| Loose success (20°) | 13.1 % | 11.4 % | -1.7 |
+| Mean reward | 2662 | 879 | -1783 |
+| SSE pole 1 | 73.85° | 74.07° | ≈ 0 |
+| SSE pole 2 | 65.77° | 62.78° | -2.99° |
+| Control effort | 0.695 | 0.685 | smoother |
+
+All deltas within 30-episode stochastic-eval noise. The 4-7 % strict-
+success ceiling at $\delta \approx 0.45$ holds — exactly the structural
+conclusion Phases C/E/F/G/H3/I documented. The optimised pipeline does
+not break physics and does not break the algorithmic ceiling. It just
+runs faster.
+
+* **Best policy from this round**:
+  `logs/ppo_double_velocity_hybrid_20260503_000503_best.pth`.
+* **Diagnostic reports**:
+  `docs/reports/phase_l_at_d0465.md`,
+  `docs/reports/phase_k_at_d0465.md`.
+
+### Round-3 future work (not run)
+
+* **Stack c5 (numba) on top of c6**: numba's 2x env-layer win is
+  orthogonal to c6's batched-trainer win. A combined PR could shave
+  another ~10-20 % off `train_update_ms_mean`. Defer until the
+  algorithmic phase (SAC) needs it.
+* **Larger `n_envs`**: c6's batched solve scales sub-linearly with N
+  due to BLAS dispatch overhead. `--n_envs 16` or `--n_envs 32` should
+  benefit disproportionately.

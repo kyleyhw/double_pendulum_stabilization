@@ -76,10 +76,14 @@ This document outlines the planned phases and tasks for developing Double Pendul
 **Goal**: Reduce wall-time of the training+test pipeline so further algorithmic experiments (SAC, LQR-bootstrap) become tractable. Hard constraint: physics bit-identical to master baseline.
 1.  [completed] Build agent-evolve infrastructure (`tools/evolve_eval.py`, `tests/test_pipeline_equivalence.py`, `agent-evolve.yaml`).
 2.  [completed] Run baseline (master): 6431 ms / PPO update at `--n_envs 4 --rollout_steps 256`.
-3.  [completed] Dispatch 3 explorer candidates in parallel git worktrees (env-only, trainer-only, full-stack).
+3.  [completed] R1 dispatch 3 explore candidates in parallel git worktrees (env-only, trainer-only, full-stack).
 4.  [completed] Score + review candidates; full-stack wins with all 20 tests passing.
 5.  [completed] Open and merge PR #1 (5.77x speedup, bit-equivalent).
 6.  [completed] Re-train Phase I best on optimised pipeline; confirm policy quality matches (4.3 % strict at $\delta = 0.445$, vs 4.7 % parent — within noise).
+7.  [completed] R2 dispatch 3 mutate candidates (Cramer's rule on the 3x3 solve, numba @njit on `_dynamics`, batched dynamics across N envs).
+8.  [completed] R2 score + review: c6 (batched dynamics) wins at 1.43x over c3, 21/21 tests still pass per-row bit-identical.
+9.  [completed] Open and merge PR #2 (additional 1.43x → ~8.25x cumulative vs original 6431 ms baseline).
+10. [completed] Re-train Phase K best on c6 pipeline; confirm policy quality unchanged (4.4 % strict at $\delta = 0.465$, vs Phase K parent 5.3 % — within 30-ep stochastic noise).
 
 ## Phase L: Algorithmic Ceiling Break (next)
 **Goal**: Push past the ~6.5 % strict-success ceiling that holds across PPO Phases C-K. See `docs/NEXT_STEPS.md` for ranked options.
