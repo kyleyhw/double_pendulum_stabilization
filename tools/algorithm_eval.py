@@ -177,23 +177,44 @@ def _run_subprocess(argv: list[str], timeout: float | None,
 
 
 def _find_run_artifacts(stdout: str) -> tuple[str | None, str | None]:
-    """Parse train.py stdout for the run name + final / best checkpoint paths."""
+    """Parse train.py stdout for the run name + the **candidate's own** checkpoint.
+
+    Resolution priority:
+    1. ``<run>_best.pth`` if it exists on disk (requires
+       ``best_fallback_save=True`` AND ``eval_every > 0`` in the train config).
+    2. ``<run>_final.pth`` (always written by the trainer's finally block).
+    3. None — caller treats this as "no candidate checkpoint produced".
+
+    Earlier versions returned matches found in stdout, which silently
+    resolved to the parent ``--load`` path when the run produced no best
+    snapshot (because the parent's path appears in the ``[load]`` log
+    line). That made every candidate look like the parent. This version
+    resolves only against on-disk paths under ``logs/`` matching the
+    candidate's actual run name.
+    """
     run_name: str | None = None
-    best_path: str | None = None
     final_path: str | None = None
     for line in stdout.splitlines():
         m = re.search(r"\[run\]\s+(\S+)", line)
         if m:
             run_name = m.group(1)
-        m = re.search(r"ppo_(\S+)_best\.pth", line)
-        if m:
-            best_path = "logs/ppo_" + m.group(1) + "_best.pth"
         m = re.search(r"final checkpoint:\s+(\S+)", line)
         if m:
             final_path = m.group(1).replace("\\", "/")
-    # Pick the best snapshot when present (more representative of policy
-    # quality than the final, which may have drifted under continued PPO).
-    return run_name, (best_path or final_path)
+
+    if run_name is not None:
+        best_candidate = REPO_ROOT / "logs" / f"ppo_{run_name}_best.pth"
+        if best_candidate.exists():
+            return run_name, str(best_candidate.relative_to(REPO_ROOT)).replace("\\", "/")
+
+    if final_path is not None:
+        # Verify it exists; the trainer always writes a final.pth in its
+        # finally block, but we guard against partial runs.
+        fp = REPO_ROOT / final_path
+        if fp.exists():
+            return run_name, final_path
+
+    return run_name, None
 
 
 def _read_csv_metrics(run_name: str | None) -> dict[str, float]:
