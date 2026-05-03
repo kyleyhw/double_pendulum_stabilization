@@ -1,0 +1,21 @@
+{
+  "control_effort": 0.629,
+  "diag_eval_difficulty": 0.1321,
+  "diag_eval_failed": 0.0,
+  "diag_eval_mean_length": 4000.0,
+  "diag_eval_mean_reward": 2816.0,
+  "final_difficulty": 0.1321,
+  "final_window_reward": 1007.9261,
+  "loose_success_rate": 0.052000000000000005,
+  "peak_difficulty": 0.1321,
+  "physics_test_failed": 0.0,
+  "physics_test_passed": 20.0,
+  "physics_test_returncode": 0.0,
+  "physics_tests_pass": 1.0,
+  "sse_pole_1_deg": 72.13,
+  "sse_pole_2_deg": 73.64,
+  "strict_success_rate": 0.013999999999999999,
+  "train_completed": 1.0,
+  "updates_completed": 800.0,
+  "wall_time_min": 27.938161768333522
+}

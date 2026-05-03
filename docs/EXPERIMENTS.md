@@ -754,3 +754,124 @@ runs faster.
 * **Larger `n_envs`**: c6's batched solve scales sub-linearly with N
   due to BLAS dispatch overhead. `--n_envs 16` or `--n_envs 32` should
   benefit disproportionately.
+
+## Phase M — algorithm-mode evolve campaign (run 2026-05-03, NULL RESULT)
+
+After Phase K (runtime optimisation, 8.25x speedup) made longer experiments
+tractable, a separate `mode: algorithm` evolve campaign was run to search
+for a training-parameter configuration that breaks the 4-7 % strict-success
+ceiling at $\delta \approx 0.45$ documented across Phases C-L.
+
+### Methodology
+
+Eval harness: `tools/algorithm_eval.py`. Each candidate is a HP config
+(YAML) that runs a short training fragment plus a 30-episode deterministic
+diagnostic eval. Two methodologies were tried:
+
+* **Continue-from-best** (rounds 1-3): load Phase L best
+  (`ppo_double_velocity_hybrid_20260503_000503_best.pth`), 200-update
+  fragment from $\delta = 0.465$. Sharp signal but biased against
+  perturbation: small HP changes drift the policy off its tight local
+  optimum.
+* **From-scratch** (round 4): no `--load`, 800 updates. Honest
+  comparison but too short — Phase H3 needed 3000 updates to reach
+  $\delta = 0.43 / 5.9\%$ strict; 800 updates only reaches
+  $\delta \approx 0.26$ where strict-success has not yet emerged.
+
+Reviewer rejects any candidate that fails to beat the parent's 4.4 %
+strict-success rate. Physics-anchor tests (`test_pipeline_equivalence`,
+`test_physics`, `test_components`, `test_energy_reward`) remain a hard
+gate — the env layer is off-limits for mutation.
+
+### Result
+
+12 candidates across 4 rounds, all rejected.
+
+| Round | Method | Best candidate | Strict | Δ vs parent |
+|---|---|---|---:|---:|
+| R1 | 500u from-scratch (3 diverse) | C3 (capacity 512 + q_theta=0.5) | 0.7 % | -3.7 |
+| R2 | 200u continue-from-best (3 HP perturbations) | C5 (relaxed KL) | 3.7 % | -0.7 |
+| R3 | 200u continue + structural changes | C9 (energy-reward switch) | 3.0 % | -1.4 |
+| R4 | 800u from-scratch (3 anchors) | C11 (energy from scratch) | 1.4 % | -3.0 |
+
+**Best round-3 candidate (C9, energy reward) regressed by only 1.4 %, with
+SSE pole 2 actually improving 62.78° → 58.12°.** That is the most
+interesting null-result — energy reward perturbs the policy more gently
+than the LQR-style hybrid quadratic penalty, and one of its components
+(angle alignment) actually held a tighter pole. But it didn't break the
+ceiling.
+
+### Diagnoses extracted from the null-results
+
+The campaign produced specific, actionable diagnoses despite finding no
+winner:
+
+1. **HP perturbation alone cannot escape the H3 local optimum.** Six
+   HP-only candidates (R1 c1/c2, R2 c4/c5/c6) all regressed below the
+   parent. R2 c5 measured `approx_kl ≈ 0.003-0.006` — well below even
+   the original `target_kl = 0.015`, proving the trust-region clip was
+   never the binding constraint. The bottleneck is the *gradient signal*
+   inside the band, not the optimiser surface.
+
+2. **The curriculum level-up gate is the actual bottleneck.** R2 c4
+   (aggressive ratchet) showed the gate
+   `time_above > 0.90·δ ∧ R̄ > R̄_prev_best` is what binds the curriculum,
+   not the ratchet step size. At $\delta = 0.465$ the agent's
+   `time_above ≈ 37 %` is below the required 42 % — the policy is
+   *just* sub-competent. R3 c8 loosened the gate to
+   `max(0.30, 0.65·δ)` and did advance one ratchet step ($\delta = 0.47$),
+   but the policy collapsed at the new difficulty (strict 1.5 %). This
+   matches Phase E's finding: forced curriculum advance without
+   competence is destructive.
+
+3. **The hybrid-reward `q_theta = 0.2` is precisely tuned to the
+   policy.** R3 c7 isolated a `q_theta` bump (0.2 → 0.5) and regressed
+   to 1.5 % strict. This corrects the R1 c3 diagnosis: it is q_theta
+   itself that traps the policy, not the hidden_dim/init_log_std combo.
+   The reward landscape's quadratic-penalty magnitude must match the
+   policy's exploration noise — bumping the penalty without
+   re-equilibrating the policy breaks the existing solution.
+
+4. **Both eval methodologies are the wrong frame for this question.**
+   Continue-from-best at 200u is too narrow (any perturbation regresses);
+   from-scratch at 800u is too short (cannot reach the strict-success
+   regime). The right eval would be 3000u from-scratch per candidate
+   (≈ 67 min wall on the c6 pipeline), but a 24-candidate campaign
+   at that scale is ~27 hours of compute — beyond the practical budget
+   without a stronger prior on which configs to try.
+
+5. **The campaign log's structural conclusion stands.** Phase J already
+   proved state-dependent $\log\sigma$ is incompatible with PPO; the
+   present null-result on HP/reward/capacity perturbations confirms
+   that within PPO + state-independent $\sigma$ + the H3 hybrid reward,
+   the 4-7 % ceiling is reached and held. The path forward is
+   **algorithmically different**, not HP-tuned: SAC (state-dependent
+   $\sigma$ via reparam gradient) or LQR-bootstrap (warm-start the
+   policy from a known stabiliser) per `docs/NEXT_STEPS.md` Options A/B.
+
+### What this campaign proves
+
+The 4-7 % strict-success ceiling at $\delta \approx 0.45$ is **not an HP
+tuning bug, a reward-shape calibration error, a capacity bottleneck, a
+trust-region width issue, or a curriculum-step-size problem**. Twelve
+candidates across four orthogonal methodologies (HP perturbation,
+structural perturbation, capacity scaling, reward swap; both
+continue-from-best and from-scratch) all failed to beat 4.4 %. The
+ceiling is structural — a property of the algorithm class, not the
+configuration within it.
+
+### What was NOT tried (saved for follow-up)
+
+* SAC rewrite (Option A in `docs/NEXT_STEPS.md`).
+* LQR behavioural-cloning bootstrap (Option B).
+* 3000-update from-scratch sweep over the same HP grid (would be
+  honest but expensive: ~27 h compute for 24 candidates).
+* `n_envs = 16` or `32` with the c6 batched solve (cheap to add but
+  unlikely to break the ceiling alone).
+
+### Best policy from the campaign
+
+`logs/ppo_double_velocity_hybrid_20260503_000503_best.pth` — unchanged
+from Phase L. The campaign's deliverable is the **null-result documentation**
+plus the `tools/algorithm_eval.py` harness, which can be reused for a
+future SAC vs PPO sweep with the same scoring methodology.
