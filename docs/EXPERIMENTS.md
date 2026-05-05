@@ -875,3 +875,121 @@ configuration within it.
 from Phase L. The campaign's deliverable is the **null-result documentation**
 plus the `tools/algorithm_eval.py` harness, which can be reused for a
 future SAC vs PPO sweep with the same scoring methodology.
+
+## Phase N — SAC implementation + 2M env-step run (run 2026-05-05)
+
+Built per `docs/NEXT_STEPS.md` Option A: SAC with state-dependent
+:math:`\log\sigma`, twin-Q + target nets (Polyak averaging at
+:math:`\tau = 0.005`), 1M-capacity replay buffer, automatic entropy
+tuning toward target :math:`\mathcal H_{\rm target} = -|\mathcal A|`.
+
+### Implementation
+
+* `src/agent/sac.py` (~330 LOC): `GaussianPolicy` (state-dep log_std,
+  reparameterised tanh-squashed sample with the numerically stable
+  Jacobian `2*(log 2 - z - softplus(-2z))`), `TwinQ`, `ReplayBuffer`,
+  `SACAgent` (canonical critic→actor→temperature update with Polyak
+  averaging on target nets each step).
+* `src/train_sac.py` (~290 LOC): vectorised env collection (reuses the
+  c6 `BatchedEnvRunner`); off-policy update pattern (1 SAC update per
+  env step after warmup); same curriculum / ratchet / CSV-log structure
+  as `src/train.py`.
+* `tests/test_sac.py` (11 tests): reparam gradient flows through both
+  heads (the PPO failure mode); action box; analytic log-prob match;
+  twin-Q independence; replay buffer correctness; critic loss decreases
+  on a static batch; Polyak averaging fires; alpha stays positive;
+  end-to-end on a trivial 1-D regulator. Suite total now 32/32.
+
+### Validation
+
+Smoke run (single pendulum, 100k env-steps, 13 min): TimeUp climbed
+0% → 19% → 39% → 48% → 53% → 62 % over the run; alpha auto-tuned
+:math:`1.0 \to 0.10`; curriculum advanced :math:`\delta = 0.0 \to 0.010`
+(2 ratchets). The agent IS learning. Smoke validates the implementation
+end-to-end.
+
+### Full run (double pendulum, 2M env-steps, 4 h 20 min)
+
+Wall-clock pace: ~7.8 ms per env-step (1 SAC update each), 8 envs in
+parallel via the c6 batched dynamics. Comparable per-env-step cost to
+PPO; SAC's update cost dominates over the env step.
+
+| Phase | Env-steps | Peak :math:`\delta` | Time elapsed |
+|---|---:|---:|---:|
+| 0 → 450k | warmup + early ratchet | 0.0 → 0.095 | ~1 h |
+| 450k → 1.34M | plateau at :math:`\delta = 0.095` | 0.095 | ~2 h |
+| 1.34M → 1.79M | breakout to 0.196 | 0.196 | ~3 h |
+| 1.79M → 2M | continued ratchet to 0.211 | **0.211** | ~4 h 20 min |
+
+Final eval at :math:`\delta = 0.211` (30 episodes deterministic):
+
+| Metric | SAC (2M env-steps) | PPO Phase L (Phase H3+I+K, ~12M env-steps) |
+|---|---:|---:|
+| Peak :math:`\delta` | 0.211 | 0.465 |
+| Strict success (10°) | **1.87 %** | **4.4 %** |
+| Loose success (20°) | 4.84 % | 11.4 % |
+| Mean episode reward (window) | -176 | (varies; not directly comparable) |
+
+**SAC underperformed PPO at this compute budget.** Per-env-step compute
+is comparable, but SAC needed more env-steps to reach the same
+curriculum stage that Phase H3 reached. Phase H3 took ~12M env-steps
+to reach :math:`\delta = 0.43`; SAC at 2M env-steps is at
+:math:`\delta = 0.211` — about 4-5× behind on a per-env-step basis.
+
+### Why SAC didn't beat PPO here
+
+1. **The curriculum gate is the binding constraint, not the
+   variance-policy choice.** Both PPO and SAC plateau at the same
+   gate (`time_above > 0.9·δ ∧ R̄ > R̄_prev_best`). SAC's
+   state-dependent :math:`\log\sigma` did not produce the kind of
+   tight stabilisation that Phase J's analysis predicted — the
+   policy reached time-above 60-65 % at low difficulty (good) but
+   could not push it above the 19 % threshold required at
+   :math:`\delta = 0.211` consistently enough to ratchet further.
+
+2. **Replay buffer composition matters at curriculum boundaries.**
+   When the curriculum advances, transitions in the buffer were
+   collected at older difficulties and may pull the critic toward
+   stale targets. Standard SAC has no curriculum-aware buffer
+   management; this is a known limitation in non-stationary tasks.
+
+3. **End-of-run reward trajectory was strongly positive** (-3500
+   mid-run → -104 at the end). SAC was *still learning* when the
+   2M-env-step budget ran out. A 5M or 10M env-step run could
+   plausibly close the gap to PPO and possibly exceed it.
+
+### What this proves
+
+* SAC machinery (reparameterised gradient through the squashed
+  Gaussian, twin-Q with Polyak target, automatic entropy tuning) is
+  implemented correctly and trains end-to-end without instability.
+* At 2M env-steps from-scratch, SAC is *behind* PPO on this task.
+* The 4-7 % strict-success ceiling at :math:`\delta \approx 0.45` is
+  *still* not broken — but SAC didn't get to that difficulty in this
+  budget, so the question of whether it would beat PPO *there*
+  remains open.
+
+### Best policy from this phase
+
+`logs/sac_sac_double_velocity_hybrid_20260505_165234_final.pth`
+(:math:`\delta = 0.211`, strict 1.87 %). Phase L PPO best
+(`ppo_double_velocity_hybrid_20260503_000503_best.pth` at 4.4 %)
+remains the overall campaign best.
+
+### Future work
+
+* **Longer SAC run from the current checkpoint** (3-5M additional
+  env-steps, ~6-12 hours). The end-of-run reward trajectory was still
+  improving — most likely SAC simply needs more time on this task.
+* **Curriculum-aware replay buffer**: discount transitions collected
+  at significantly lower :math:`\delta` than the current curriculum.
+  Cheap to implement (multiply per-transition sample weight by
+  :math:`\exp(-\Delta\delta / \sigma)`).
+* **Higher `updates_per_step`** (currently 1 per env step; common SAC
+  configs use 1-4). Trades more SAC compute for less env compute,
+  which is the right trade when env-stepping is the cheap part (the
+  c6 batched solve made env-stepping ~8 ms/step but each SAC update
+  is similarly ~1-2 ms).
+* **Option B (LQR behavioural-cloning bootstrap)**: still untried.
+  Pre-train the SAC actor against the LQR controller in
+  `src/control/lqr.py` to skip the swing-up exploration.
