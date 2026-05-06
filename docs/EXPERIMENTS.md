@@ -993,3 +993,86 @@ remains the overall campaign best.
 * **Option B (LQR behavioural-cloning bootstrap)**: still untried.
   Pre-train the SAC actor against the LQR controller in
   `src/control/lqr.py` to skip the swing-up exploration.
+
+### Phase N continuation (2026-05-06): +900k env-steps from Phase N final
+
+A 2-hour batch resuming from
+`logs/sac_sac_double_velocity_hybrid_20260505_165234_final.pth`
+to test whether SAC's end-of-Phase-N upward trajectory continued.
+
+**Wall-clock**: 2 h 02 min for 900k env-steps (884k completed before
+the harness's checkpoint cap). Pace: 7.7 ms/env-step, identical to
+Phase N — no slowdown from the larger replay buffer.
+
+**Trajectory**:
+
+| Stage | Env-steps in batch | Peak :math:`\delta` | Reward (window) |
+|---|---:|---:|---:|
+| start (loaded checkpoint) | 0 | 0.211 | -176 (Phase N final) |
+| hour 1 | 0 → 368k | **0.271** | -176 → +6700 (peak) |
+| hour 2 | 368k → 884k | 0.271 (stalled) | +6700 → +5318 (drift) |
+
+Hour 1 was strongly promising — SAC ratcheted past :math:`\delta = 0.211`
+to :math:`\delta = 0.271` and reward exploded from -176 to +6700.
+Hour 2 stalled at the same difficulty (same plateau pattern Phases C/E/F
+showed under PPO).
+
+### Apples-to-apples vs PPO Phase L at the same :math:`\delta = 0.271`
+
+| Metric | PPO Phase L (parent) | SAC (continuation final) |
+|---|---:|---:|
+| Strict success (10°) | 5.2 % | **5.74 %** |
+| Loose success (20°) | 13.9 % | **17.87 %** |
+| Mean episode reward | 2750 | **5318** |
+
+**SAC matched or slightly beat PPO at the same difficulty**, with a
+clearly stronger mean episode reward (+94 %). Strict-success delta is
+within 30-episode noise but the direction is consistent.
+
+### Compute efficiency
+
+SAC reached :math:`\delta = 0.271 / 5.74\%` strict in **2.9M cumulative
+env-steps** (2M Phase N + 0.9M continuation). PPO reached
+:math:`\delta = 0.271` in roughly 2.5M env-steps within Phase H3
+(update ~600 of 3000 from-scratch, at 8 envs × 512 rollout). On a
+per-env-step basis the two are comparable; on a per-wall-time basis
+they're also comparable on the c6 pipeline.
+
+The literature claim "SAC is 2-5× more sample-efficient than PPO on
+cart-pendulum benchmarks" did NOT manifest on this exact task at this
+budget. Possible reasons:
+
+1. **Curriculum non-stationarity** punishes SAC's replay buffer:
+   stale transitions collected at lower :math:`\delta` pull the
+   critic's TD targets in the wrong direction when the curriculum
+   advances. PPO doesn't have this problem (purely on-policy).
+2. **Action-space mismatch** with `VelocityControl`: the high-gain
+   P-controller produces near-bang-bang outputs, which neutralises
+   SAC's micro-correction advantage. The state-dependent
+   :math:`\log\sigma` is supposed to shrink near upright, but the
+   downstream velocity controller saturates the action regardless.
+3. **2M env-steps is genuinely too short** for SAC on this task; the
+   end-of-run upward trajectory in both Phase N and the continuation
+   suggest more compute would close the gap.
+
+### Verdict on Option A (SAC vs PPO)
+
+After ~7 cumulative hours of SAC compute, the result is **SAC
+matches PPO at the same difficulty but did not exceed it**. The
+4-7 % strict-success ceiling at :math:`\delta \approx 0.45`
+remains untested for SAC because SAC has not reached that difficulty.
+
+Pragmatic conclusion: SAC is *competitive* but not *clearly superior*
+on this exact task at affordable compute. The principled next move
+is **Option B (LQR behavioural-cloning bootstrap)** — pre-train the
+actor to imitate the LQR controller near upright, skip the swing-up
+exploration phase entirely, then fine-tune. This reduces the budget
+SAC needs to reach the high-:math:`\delta` regime where the structural
+advantage of state-dependent :math:`\log\sigma` should manifest.
+
+### Best policy from the continuation
+
+`logs/sac_sac_double_velocity_hybrid_20260505_225646_final.pth`
+(:math:`\delta = 0.271`, strict 5.74 %). Phase L PPO best at
+:math:`\delta = 0.465` (4.4 % strict) is still the *highest-difficulty*
+policy in the campaign.
