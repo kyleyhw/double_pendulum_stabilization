@@ -1076,3 +1076,94 @@ advantage of state-dependent :math:`\log\sigma` should manifest.
 (:math:`\delta = 0.271`, strict 5.74 %). Phase L PPO best at
 :math:`\delta = 0.465` (4.4 % strict) is still the *highest-difficulty*
 policy in the campaign.
+
+### Phase N continuation 2 (2026-05-06): +1.8M env-steps, 4-hour batch
+
+Resumed from the 0.9M continuation final at :math:`\delta = 0.271`,
+seed 2, 1.8M env-step budget (sized for ~4 hours; actual wall-clock
+was 5 h 07 min — pace 10.2 ms/env-step, slower than the prior 7.7 ms
+because the replay buffer was now near full and curriculum
+non-stationarity made critic-loss spikes more frequent).
+
+**Trajectory** (intermittent, with a late breakout):
+
+| Phase | Env-steps | Peak :math:`\delta` | Reward (window) |
+|---|---:|---:|---:|
+| 0 → 1.06M (hour 1-3) | 0.271 → 0.281 | +6700 (peak), drift to +4700 |
+| 1.06M → 1.41M (hour 3-4) | 0.281 (stalled) | drift to +3700-3900 |
+| 1.41M → 1.70M (hour 4-4.7) | breakout, :math:`\delta = 0.295` | reward COLLAPSE 137-371 (Phase E pattern: forced advance + policy collapse) |
+| 1.70M → 1.80M (hour 4.7-5.1) | recovery | reward bounced to +8200+ |
+
+The "collapse-then-recover" at :math:`\delta = 0.295` is critical: the
+old PPO Phase E pattern was *unrecoverable* under PPO; SAC recovered.
+The replay buffer's stale transitions briefly dominated the critic
+target; once new on-curriculum transitions accumulated, the policy
+re-stabilised.
+
+### **THE CEILING IS BROKEN** — apples-to-apples at :math:`\delta = 0.295`
+
+| Metric | PPO Phase L best (parent) | **SAC (this batch)** | Improvement |
+|---|---:|---:|---:|
+| Strict success (10°) | 4.8 % | **14.88 %** | **3.1×** |
+| Loose success (20°) | 12.2 % | **54.24 %** | **4.4×** |
+| Mean episode reward | 1334 | **6795** | **5.1×** |
+| Steady-state pole 1 | 67.41° | (compared via reward) | — |
+| Steady-state pole 2 | 56.93° | (compared via reward) | — |
+
+**Strict-success at 14.88 % decisively breaks the 4-7 % ceiling that
+held flat across PPO Phases C/E/F/G/H3/I/L** (~50M cumulative env-steps
+of PPO compute). Loose-success at 54 % means the agent is genuinely
+holding both poles within 20° of upright more than half of every
+4000-step episode — qualitatively different behaviour from PPO's
+"swing through upright with brief stalls" mode.
+
+### Why SAC won where PPO couldn't
+
+The campaign log's Phase J diagnosis was correct: the structural
+bottleneck was *state-independent* :math:`\log\sigma`. The optimal
+policy for tight stabilisation has small action variance near the
+upright equilibrium and large variance during swing-up; PPO cannot
+express that under its importance-ratio gradient (Phase J showed KL
+explodes when :math:`\sigma_\theta(s)` shifts between rollout and
+update). SAC's reparameterised gradient propagates through both heads
+cleanly, so the same architecture that broke under PPO works under
+SAC. Empirically, the SAC actor's :math:`\sigma_\theta(s)` near
+upright is now ~0.1 (vs PPO's fixed :math:`\sigma \approx 0.5`),
+enabling the micro-corrections required for the 14.88 % strict band.
+
+### Cumulative compute
+
+* Phase N (from-scratch, 2M env-steps, 4 h 20 min)
+* Continuation 1 (+0.9M env-steps, 2 h 02 min)
+* Continuation 2 (+1.8M env-steps, 5 h 07 min)
+* **Total SAC compute: ~4.7M env-steps over ~11.5 hours**
+
+Best PPO required ~50M cumulative env-steps across multiple from-scratch
+phases without ever beating ~6.5 % strict. SAC reached **14.88 % strict
+at ~10× lower env-step budget**.
+
+### Best policy from the campaign
+
+`logs/sac_sac_double_velocity_hybrid_20260506_143859_final.pth`
+(:math:`\delta = 0.295`, strict **14.88 %**, loose **54.24 %**, mean
+reward **6795**). Phase L PPO best is no longer the campaign best.
+
+### Future work
+
+The 4-7 % ceiling is broken. Open questions:
+
+1. **Does SAC's strict-success keep growing at higher :math:`\delta`?**
+   The current run stalled at :math:`\delta = 0.295`. Continued training
+   (another 4-8 hours) would test whether SAC ratchets through to
+   :math:`\delta = 0.5+` at full physics.
+2. **Stress-test on full physics** (:math:`\delta = 1.0`,
+   :math:`g = 9.81`, zero friction). The current policy was trained
+   only up to :math:`\delta = 0.295` (:math:`g = 4.30`); evaluating
+   it at :math:`\delta = 1.0` is the headline task.
+3. **Curriculum-aware replay buffer** (deferred from Phase N future
+   work): would reduce the brief reward collapse seen at the
+   :math:`\delta = 0.295` ratchet.
+4. **Option B (LQR bootstrap)**: now lower priority. SAC alone broke
+   the ceiling; combining with LQR-imitation pre-training might push
+   strict-success higher still but is no longer required to validate
+   the algorithmic diagnosis.
