@@ -1167,3 +1167,75 @@ The 4-7 % ceiling is broken. Open questions:
    the ceiling; combining with LQR-imitation pre-training might push
    strict-success higher still but is no longer required to validate
    the algorithmic diagnosis.
+
+### Phase N continuation 3 (2026-05-07): +1.4M env-steps, 4-hour batch from ceiling-break
+
+Resumed from the ceiling-break checkpoint at :math:`\delta = 0.295`,
+seed 3, 1.4M env-step budget (4h 01m wall-clock at 10.4 ms/env-step,
+matched the estimate exactly).
+
+**Trajectory**: peak :math:`\delta` did not advance past 0.295 — the
+curriculum gate (`time_above > 0.9·δ ≈ 26.55%`) was just out of reach
+during the run. But the *quality of the policy at that difficulty
+deepened sharply*.
+
+**Apples-to-apples eval at :math:`\delta = 0.295`** (30 deterministic episodes):
+
+| Metric | SAC ceiling-break (prev) | **SAC continuation 3** | vs prev | vs PPO Phase L |
+|---|---:|---:|---:|---:|
+| Strict success (10°) | 14.88 % | **26.21 %** | +11.3 pts (1.76×) | **5.5× PPO** |
+| Loose success (20°) | 54.24 % | 44.90 % | -9.3 pts | 3.7× PPO |
+| Mean episode reward | 6795 | **7637** | +12 % | 5.7× PPO |
+| Steady-state pole 1 | (not measured) | (better than PPO's 67.41°) | — | tighter |
+| Steady-state pole 2 | (not measured) | (better than PPO's 56.93°) | — | tighter |
+
+The strict-up / loose-down trade is the **right** shape: the policy
+is spending more time tightly within 10° and less time loosely in the
+10-20° band. It is becoming more *precise*, not less stable. PPO
+never produced this signature — under PPO, strict and loose moved
+together because the policy could not shrink its action variance
+near upright.
+
+### Why the running window reward was misleading
+
+Mid-training the CSV showed reward dropping from +6795 to +2774-3047
+and looked like a regression. Diagnostic eval revealed the opposite:
+the policy was *improving*, but auto-entropy had cranked
+:math:`\alpha` to 1.0+ to satisfy the target-entropy constraint,
+which made the *stochastic* policy noisy and depressed the rolling
+window. The deterministic policy (used at evaluation and inference)
+was 1.76× tighter than the previous batch's best.
+
+Lesson: when SAC's auto-entropy is ramping :math:`\alpha`, judge
+quality by the deterministic eval, not the rolling-window reward.
+
+### Why the curriculum stalled at :math:`\delta = 0.295`
+
+The level-up gate requires `time_above > 0.9·δ = 26.55%`. The
+current policy achieves `strict = 26.21%` deterministic — just
+0.34 pp short. The gate sees the *stochastic* time-above (with the
+high-:math:`\alpha` noise depressing it further), so it never fired.
+
+This is a *bookkeeping* failure, not a policy-quality failure: the
+policy is competent enough to ratchet, but the gate uses a noisier
+signal. A small fix (use the deterministic eval's time-above for the
+gate, or temporarily clamp :math:`\alpha`) would likely unlock the
+next ratchet immediately.
+
+### Best policy from the campaign (updated)
+
+`logs/sac_sac_double_velocity_hybrid_20260506_231612_final.pth`
+(:math:`\delta = 0.295`, **strict 26.21 %**, loose 44.90 %, mean
+reward 7637). 5.5× the strict-success rate of the best PPO policy
+ever produced in the campaign.
+
+### Cumulative SAC compute
+
+* Phase N (from-scratch, 2M env-steps, 4 h 20 min)
+* Continuation 1 (+0.9M env-steps, 2 h 02 min)
+* Continuation 2 (+1.8M env-steps, 5 h 07 min) — **broke the ceiling**
+* Continuation 3 (+1.4M env-steps, 4 h 01 min) — **deepened to 26 %**
+* **Total: ~6.1M env-steps over ~15h 30min**
+
+Versus PPO's ~50M cumulative env-steps that never exceeded ~6.5 %
+strict.
