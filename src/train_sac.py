@@ -176,6 +176,7 @@ def train(args: argparse.Namespace) -> None:
         gamma=args.gamma, tau=args.tau,
         lr=args.lr, batch_size=args.batch_size,
         replay_capacity=args.replay_capacity,
+        alpha_max=args.alpha_max,
     )
     print(f"[agent]  device={agent.device} hidden={args.hidden_dim} "
           f"batch={args.batch_size} buffer={args.replay_capacity}")
@@ -382,6 +383,10 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--warmup_steps", type=int, default=10_000)
     p.add_argument("--updates_per_step", type=int, default=1,
                    help="Gradient updates per env step PER ENV.")
+    p.add_argument("--alpha_max", type=float, default=None,
+                   help="Upper clamp on auto-entropy alpha. Default None "
+                        "(unbounded). Set to ~0.3 to prevent runaway "
+                        "exploration during curriculum transitions.")
 
     # Training scale.
     p.add_argument("--n_envs", type=int, default=8)

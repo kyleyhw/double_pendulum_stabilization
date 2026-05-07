@@ -302,6 +302,7 @@ class SACAgent:
         replay_capacity: int = 1_000_000,
         target_entropy: Optional[float] = None,
         init_log_alpha: float = 0.0,
+        alpha_max: Optional[float] = None,
         device: Optional[torch.device] = None,
     ) -> None:
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -311,6 +312,21 @@ class SACAgent:
         self.batch_size = int(batch_size)
         self.target_entropy = float(target_entropy) if target_entropy is not None \
             else -float(action_dim)
+        # Optional upper clamp on alpha. When the curriculum advances and the
+        # replay buffer briefly contains stale low-difficulty transitions,
+        # auto-entropy can ramp alpha unbounded (Phase N continuation 3
+        # observed alpha climbing to 1.0+ at d=0.295), which adds enough
+        # noise to the stochastic policy that the curriculum gate's
+        # `time_above` measurement falls below the threshold even though
+        # the deterministic policy is competent. Clamping alpha at ~0.3 keeps
+        # the entropy bonus meaningful for exploration without drowning the
+        # actor's precision near upright.
+        self._alpha_max: Optional[float] = (
+            float(alpha_max) if alpha_max is not None else None
+        )
+        self._log_alpha_max: Optional[float] = (
+            float(math.log(self._alpha_max)) if self._alpha_max is not None else None
+        )
 
         self.actor = GaussianPolicy(state_dim, action_dim, hidden_dim).to(self.device)
         self.critic = TwinQ(state_dim, action_dim, hidden_dim).to(self.device)
@@ -392,6 +408,11 @@ class SACAgent:
         self.alpha_opt.zero_grad()
         alpha_loss.backward()
         self.alpha_opt.step()
+        # Clamp log_alpha from above if requested (prevents runaway exploration
+        # when the gradient pushes alpha unbounded — see __init__ doc).
+        if self._log_alpha_max is not None:
+            with torch.no_grad():
+                self.log_alpha.clamp_(max=self._log_alpha_max)
 
         # ----- Polyak averaging on target critic ------------------------------
         with torch.no_grad():
