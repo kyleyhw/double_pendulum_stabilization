@@ -1235,7 +1235,91 @@ ever produced in the campaign.
 * Continuation 1 (+0.9M env-steps, 2 h 02 min)
 * Continuation 2 (+1.8M env-steps, 5 h 07 min) — **broke the ceiling**
 * Continuation 3 (+1.4M env-steps, 4 h 01 min) — **deepened to 26 %**
-* **Total: ~6.1M env-steps over ~15h 30min**
+* Continuation 4 (+1.4M env-steps, 3 h 28 min, alpha_max=0.3) — **broke gate stall**
+* **Total: ~7.5M env-steps over ~19h**
 
 Versus PPO's ~50M cumulative env-steps that never exceeded ~6.5 %
 strict.
+
+### Phase N continuation 4 (2026-05-07/08): alpha_max=0.3 unlocks the curriculum gate
+
+The continuation-3 stall at :math:`\delta = 0.295` was diagnosed as a
+bookkeeping issue (high :math:`\alpha` depressed the stochastic
+``time_above`` below the level-up gate even though the deterministic
+policy met it). Fix: ``--alpha_max 0.3`` clamps the auto-entropy
+:math:`\alpha` from above. Implementation in `src/agent/sac.py`
+:py:meth:`SACAgent.update`, exposed as the
+``--alpha_max`` flag in `src/train_sac.py`.
+
+**Trajectory**: 1.4M env-steps in 3h 28min (alpha clamp also slightly
+reduced per-step compute by stabilising critic targets).
+
+* Hour 1: curriculum advanced :math:`\delta = 0.295 \to 0.340`
+  immediately (the gate fix worked).
+* Hour 2-4: stalled at :math:`\delta = 0.340`; reward bouncing
+  -474 → +108 → +3 at end of run (policy still adapting to the
+  harder physics).
+
+**Eval at the new curriculum (:math:`\delta = 0.340`)**:
+
+| Metric | PPO Phase L | **SAC v3** | factor |
+|---|---:|---:|---:|
+| Strict success (10°) | 3.6 % | **9.28 %** | **2.58×** |
+| Loose success (20°) | 9.6 % | 26.07 % | 2.72× |
+| Mean episode reward | 806 | -79 | (PPO wins reward; SAC pays more quadratic penalty per step at higher δ) |
+
+Strict-success regressed in absolute terms (26.21 % at :math:`\delta =
+0.295` → 9.28 % at :math:`\delta = 0.340`) — expected, since the
+threshold band tightens and the physics gets harder. The policy was
+still consolidating at the harder difficulty when the 4-hour budget
+ran out.
+
+### Headline task: full physics (:math:`\delta = 1.0`, :math:`g = 9.81`)
+
+The cart-double-pendulum's headline task is stabilisation at *full*
+gravity. None of the SAC checkpoints have been trained at
+:math:`\delta > 0.34`; PPO Phase L was trained through to
+:math:`\delta = 0.465`. Cross-comparison at :math:`\delta = 1.0`:
+
+| Model | Trained max :math:`\delta` | Strict @ :math:`\delta = 1.0` | Loose @ :math:`\delta = 1.0` | Mean R |
+|---|---:|---:|---:|---:|
+| **PPO Phase L** | 0.465 | **2.4 %** | **6.6 %** | -24 |
+| SAC v2 (continuation 3) | 0.295 | 0.69 % | 2.19 % | -1648 |
+| SAC v3 (continuation 4) | 0.340 | 0.58 % | 4.20 % | -1378 |
+
+**At the headline task, PPO Phase L still wins.** SAC's structural
+advantage is real but it needs more curriculum advance to compete on
+unseen physics. PPO has trained on harder physics (:math:`g = 5.6` at
+:math:`\delta = 0.465`); SAC has only seen :math:`g = 4.7` at
+:math:`\delta = 0.34`.
+
+### Two non-comparable champions
+
+| Optimise for... | Winner | Headline number |
+|---|---|---|
+| **Strict-success at the trained :math:`\delta`** | SAC v2 (continuation 3) | 26.21 % at :math:`\delta = 0.295` |
+| **Strict-success at full physics** | PPO Phase L | 2.4 % at :math:`\delta = 1.0` |
+
+The campaign log no longer has a single best policy — it has two,
+optimised for different criteria. Reporting both honestly.
+
+### What it would take for SAC to win the headline task
+
+SAC would need to ratchet through to :math:`\delta = 1.0` (or close
+to it). At the observed pace of ~1 ratchet step per 4-hour batch
+(0.05 in :math:`\delta`), the path from :math:`\delta = 0.34 \to 1.0`
+is roughly 13 batches × 4 hours = ~52 hours of compute, or ~26M
+additional env-steps. That's expensive but tractable; it would also
+test whether SAC's per-difficulty 2-5× advantage over PPO compounds
+all the way to full physics, where it would translate to strict
+~10-20 % at :math:`\delta = 1.0` (vs PPO's 2.4 %) — a qualitatively
+different headline-task result.
+
+### Best policies (current campaign state)
+
+* `logs/sac_sac_double_velocity_hybrid_20260506_231612_final.pth` —
+  best strict-success ever produced (26.21 % at :math:`\delta = 0.295`).
+* `logs/sac_sac_double_velocity_hybrid_20260507_200309_final.pth` —
+  highest-:math:`\delta` SAC checkpoint (:math:`\delta = 0.340`).
+* `logs/ppo_double_velocity_hybrid_20260503_000503_best.pth` —
+  best on the headline task (2.4 % strict at :math:`\delta = 1.0`).
