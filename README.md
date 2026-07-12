@@ -198,6 +198,8 @@ Watch:
 
 ## 4. Documentation index
 
+* [Next steps — self-contained handoff](docs/NEXT_STEPS.md) (resume point; start here)
+* [Experiment log — campaign chronicle](docs/EXPERIMENTS.md)
 * [Physics derivation](docs/physics_derivation.md)
 * [Controllability analysis](docs/controllability_analysis.md)
 * [Stabilization strategy](docs/stabilization_strategy.md)
