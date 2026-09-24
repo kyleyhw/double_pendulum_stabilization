@@ -6,6 +6,13 @@ using a from-scratch PPO implementation with curriculum learning, GAE-$\lambda$,
 tanh-squashed Gaussian policies, observation normalisation, and vectorised
 rollouts.
 
+**Status:** the double pendulum is swung up from hanging and balanced at full
+difficulty by the model-based controller in `src/control/swingup.py`
+(trajectory optimisation + time-varying LQR + LQR balance): 100/100 episodes,
+steady-state error < 0.05° — see [§3.4](#34-model-based-swing-up-and-balance)
+and [`docs/reports/swingup_d1.md`](docs/reports/swingup_d1.md). No RL policy
+balances yet; see [`docs/NEXT_STEPS.md`](docs/NEXT_STEPS.md).
+
 ![Visualizer Screenshot](docs/images/visualizer_screenshot.png)
 
 ## 1. Repository structure
@@ -22,19 +29,26 @@ double_pendulum_stabilization/
 │   │   ├── controls.py              # ForceControl, VelocityControl
 │   │   └── rewards.py               # *Standard, ExponentialSwingUp, EnergyShaping
 │   ├── agent/ppo.py                 # PPO + GAE + tanh squash + minibatches
-│   ├── control/                     # LQR baseline + controllability check
+│   ├── control/
+│   │   ├── swingup.py               # trajopt swing-up + TVLQR + LQR balance (works)
+│   │   ├── data/swingup_d1.npz      # nominal swing-up trajectory at δ = 1
+│   │   ├── lqr.py                   # continuous-time LQR at up-up
+│   │   └── check_controllability.py
 │   ├── utils/
 │   │   ├── normalize.py             # RunningMeanStd + NormalizeObservation
 │   │   ├── schedules.py             # linear / cosine schedules
 │   │   └── visualizer.py            # Pygame renderer
 │   ├── train.py                     # vectorised PPO trainer
 │   ├── simulate.py                  # play a checkpoint with optional MP4 recording
+│   ├── run_lqr.py                   # interactive swing-up + balance demo
 │   ├── evaluate_diagnostics.py      # deterministic-policy report
 │   └── generate_report.py           # builds learning curve + final-run + montage
 ├── tests/
 │   ├── test_physics.py              # energy conservation under RK4
 │   ├── test_components.py           # PPO, normaliser, integrators, bounds
-│   └── test_energy_reward.py        # EnergyShapingReward
+│   ├── test_energy_reward.py        # EnergyShapingReward
+│   └── test_swingup.py              # swing-up plant model, trajectory, closed loop
+├── tools/eval_swingup.py            # closed-loop swing-up evaluation + report
 ├── docs/                            # derivations, images, training reports
 ├── pyproject.toml                   # uv project, dev tooling (ruff, ty)
 └── .pre-commit-config.yaml          # ruff + ty + detect-secrets
@@ -196,9 +210,33 @@ Watch:
 * `curriculum/difficulty` — should increase monotonically; long flat
   stretches mean the ratchet gate is not being met.
 
+### 3.4 Model-based swing-up and balance
+
+```bash
+python src/run_lqr.py                      # hanging -> swing up -> balance (pygame)
+python src/run_lqr.py --reset_mode up      # balance only; LEFT/RIGHT push the cart
+python tools/eval_swingup.py --episodes 100 --report docs/reports/swingup_d1.md
+```
+
+Three stages, all on the simulator's own RK4 discretisation:
+
+1. **Trajectory optimisation** — direct multiple shooting from hanging at
+   rest to up-up at rest over $T = 4$ s (force held constant over 50 ms
+   segments, $|x| \le 2.5$ m, $|F| \le 150$ N, minimum $\int F^2 dt$),
+   solved with SLSQP. The committed solution peaks at 26 N.
+2. **Time-varying LQR** along the nominal, from the discrete Riccati
+   recursion started at the upright infinite-horizon solution.
+3. **LQR balance** at up-up once the trajectory ends.
+
+A short LQR *settle* phase about hanging first removes the reset noise. The
+controller outputs newtons, so drive the env with `ForceControl`. At other
+curriculum difficulties the trajectory is re-optimised automatically
+(~1–2 min; set `OMP_NUM_THREADS=1` when running several solves in parallel).
+
 ## 4. Documentation index
 
 * [Next steps — self-contained handoff](docs/NEXT_STEPS.md) (resume point; start here)
+* [Designed swing-up evaluation at δ = 1](docs/reports/swingup_d1.md)
 * [Experiment log — campaign chronicle](docs/EXPERIMENTS.md)
 * [Physics derivation](docs/physics_derivation.md)
 * [Controllability analysis](docs/controllability_analysis.md)

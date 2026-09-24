@@ -7,7 +7,46 @@ readable in a fresh session with no prior context. The chronological campaign
 log is `docs/EXPERIMENTS.md` (currently ends mid-Phase-P; see
 [Repository state](#repository-and-environment-state)).
 
-## Executive summary
+## Update 2026-09-24 — Option A implemented; the system is stabilized
+
+Option A below is done and works. `src/control/swingup.py` swings the
+double pendulum up from hanging and balances it at full difficulty
+($\delta = 1$, wind $\sigma_w = 1$ N):
+
+| Test (100 episodes, 20 s, `down` reset) | Result |
+|---|---:|
+| Survived / stayed within soft cart bound | 100 % / 100 % |
+| Terminal-1 s strict | **100 %** (100 / 100 episodes) |
+| Max sustained strict | 15.5 s (strict from ~4.5 s to the horizon) |
+| Steady-state P1 / P2 | 0.038° / 0.016° |
+| Peak cart force | 27 N |
+
+Also verified: 30/30 at 5× wind ($\sigma_w = 5$ N) and 30/30 with the
+settle phase disabled. Full report: `docs/reports/swingup_d1.md`;
+reproduce with `python tools/eval_swingup.py --episodes 100`; watch it with
+`python src/run_lqr.py`. Implementation notes (these differ in detail from
+the Option A plan below):
+
+* **Multiple shooting on the simulator's own RK4**, not collocation: force
+  is constant over 10-step (50 ms) segments and each defect is 10 RK4
+  steps at $dt = 0.005$, so the nominal is reproduced by the env to
+  $\sim 10^{-11}$ and the tracker absorbs no transcription error. SLSQP
+  (dense, ~560 variables) plus a Gauss–Newton feasibility polish; ~40–90 s.
+  No new dependency.
+* **Discrete TVLQR** at every simulator step, Riccati started from the
+  upright DARE solution; the balance LQR is that same discrete gain.
+* **Settle phase**: LQR about hanging for up to 3 s so the swing starts on
+  its nominal initial state (not required — 30/30 without it — but free).
+* `src/run_lqr.py` previously crashed (`env.force_mag` does not exist) and
+  fed LQR forces into the default `VelocityControl`; it now uses
+  `ForceControl` and runs the full controller.
+
+What remains open is the *RL* question: no learned policy balances. The
+designed trajectory is now available as a demonstration source for Option B
+(reverse curriculum) — e.g. reset episodes onto states sampled along
+`src/control/data/swingup_d1.npz`, latest first.
+
+## Executive summary (2026-07-12)
 
 The question "why doesn't the stabilization work?" was answered definitively
 on 2026-07-12:

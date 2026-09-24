@@ -1323,3 +1323,32 @@ different headline-task result.
   highest-:math:`\delta` SAC checkpoint (:math:`\delta = 0.340`).
 * `logs/ppo_double_velocity_hybrid_20260503_000503_best.pth` —
   best on the headline task (2.4 % strict at :math:`\delta = 1.0`).
+
+## Phase R (2026-09-24): designed swing-up — the double pendulum is stabilized
+
+Following `docs/NEXT_STEPS.md` Option A: the swing-up is designed rather
+than learned. Energy shaping (classical or as an RL reward) fails because on
+the 2-link chain the constant-energy set is chaotic and the joint capture
+event is measure-zero; a controller must steer the configuration.
+
+**Method** (`src/control/swingup.py`):
+
+1. Direct multiple shooting, hanging-at-rest :math:`\to` up-up-at-rest,
+   :math:`T = 4` s, 80 segments of 10 RK4 steps (the env's own
+   discretisation), :math:`|x| \le 2.5` m, :math:`|F| \le 150` N,
+   objective :math:`\sum h F_k^2`. SLSQP + Gauss–Newton polish; max defect
+   :math:`4.8 \times 10^{-11}`, peak nominal force 26.4 N.
+2. Discrete time-varying LQR along the nominal
+   (:math:`Q = \mathrm{diag}(10, 100, 100, 1, 1, 1)`, :math:`R = 0.01`),
+   terminal cost = upright DARE solution.
+3. Discrete LQR balance at up-up; LQR settle phase about hanging first.
+
+**Result** (:math:`\delta = 1`, 100 seeds, 20 s, `ForceControl`,
+`docs/reports/swingup_d1.md`): 100 % survival, 100 % terminal-1 s strict
+in every episode, steady-state error 0.038° / 0.016°, peak force 27 N.
+Robust to 5× wind and to skipping the settle phase (30/30 each).
+
+**Fixed along the way:** `src/run_lqr.py` referenced a non-existent
+`env.force_mag` and drove the env through `VelocityControl`; it now runs the
+swing-up controller through `ForceControl`.
+
