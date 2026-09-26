@@ -68,9 +68,13 @@ def load_or_optimize(p: PlantParams, path: str, reoptimize: bool, verbose: bool 
     return traj
 
 
-def run_episode(env: DoublePendulumCartEnv, ctrl: SwingUpController, seed: int,
-                horizon: float, reset_mode: str = "down") -> dict:
+def run_episode(env: DoublePendulumCartEnv, ctrl, seed: int, horizon: float,
+                reset_mode: str = "down", init_state: np.ndarray | None = None) -> dict:
+    """One episode with any controller exposing ``reset(state)`` and
+    ``action(state, max_force)``; ``init_state`` overrides the reset state."""
     env.reset(seed=seed, options={"mode": reset_mode})
+    if init_state is not None:
+        env.state = np.asarray(init_state, dtype=np.float64).copy()
     ctrl.reset(env.state)
     n = int(round(horizon / env.dt))
     errs = np.zeros((n, 2))

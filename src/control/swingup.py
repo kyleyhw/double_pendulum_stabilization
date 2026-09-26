@@ -183,20 +183,25 @@ def linearize_step(states: np.ndarray, forces: np.ndarray, p: PlantParams,
     return A, B
 
 
+def lqr_gain_at(p: PlantParams, eq: np.ndarray, Q: np.ndarray | None = None, R: float = 0.01
+                ) -> tuple[np.ndarray, np.ndarray]:
+    """Discrete infinite-horizon LQR about the equilibrium ``eq`` (zero force);
+    returns ``(K, P)`` with ``u = -K e``."""
+    Q = default_q() if Q is None else Q
+    A, B = linearize_step(np.asarray(eq, dtype=np.float64), 0.0, p)
+    return _dlqr(A[0], B[0], Q, np.array([[R]]))
+
+
 def upright_lqr_gain(p: PlantParams, Q: np.ndarray | None = None, R: float = 0.01
                      ) -> tuple[np.ndarray, np.ndarray]:
     """Discrete infinite-horizon LQR at up-up; returns ``(K, P)`` with ``u = -K e``."""
-    Q = default_q() if Q is None else Q
-    A, B = linearize_step(UPRIGHT, 0.0, p)
-    return _dlqr(A[0], B[0], Q, np.array([[R]]))
+    return lqr_gain_at(p, UPRIGHT, Q, R)
 
 
 def hanging_lqr_gain(p: PlantParams, Q: np.ndarray | None = None, R: float = 0.01
                      ) -> np.ndarray:
     """Discrete infinite-horizon LQR about the hanging equilibrium (settle phase)."""
-    Q = default_q() if Q is None else Q
-    A, B = linearize_step(HANGING, 0.0, p)
-    return _dlqr(A[0], B[0], Q, np.array([[R]]))[0]
+    return lqr_gain_at(p, HANGING, Q, R)[0]
 
 
 def default_q() -> np.ndarray:
@@ -425,13 +430,14 @@ def tvlqr_gains(traj: SwingUpTrajectory, Q: np.ndarray | None = None, R: float =
                 P_final: np.ndarray | None = None) -> np.ndarray:
     """
     Finite-horizon discrete LQR gains along ``traj``; returns ``K`` of shape
-    ``(n, 1, 6)`` with feedback ``u_j = F_j - K_j (s_j - s^{nom}_j)``.
+    ``(n, 1, 6)`` with feedback ``u_j = F_j - K_j (s_j - s^{nom}_j)``. The
+    terminal cost defaults to the infinite-horizon LQR at ``traj.goal``.
     """
     p = traj.params
     Q = default_q() if Q is None else Q
     Rm = np.array([[R]])
     if P_final is None:
-        P_final = upright_lqr_gain(p, Q, R)[1]
+        P_final = lqr_gain_at(p, traj.goal, Q, R)[1]
     A, B = linearize_step(traj.states[:-1], traj.forces, p)
     n = len(traj.forces)
     K = np.empty((n, 1, 6))
