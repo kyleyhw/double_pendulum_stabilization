@@ -124,7 +124,9 @@ def main() -> None:
     ap.add_argument("--report", default=None)
     ap.add_argument("--policy", default=None,
                     help="evaluate a goal-conditioned RL policy (src/train_balance.py "
-                         "--goals all) instead of the model-based controller")
+                         "--goals all) instead of the model-based controller; a comma-"
+                         "separated list of four --goals expert:<NAME> checkpoints is "
+                         "evaluated as a goal-gated mixture")
     args = ap.parse_args()
 
     if args.rebuild or not os.path.exists(args.library):
@@ -136,8 +138,9 @@ def main() -> None:
         print(f"Library ({len(lib)} transitions) built in {time.time() - t0:.0f} s -> {args.library}")
     lib = load_library(args.library)
     if args.policy:
-        from tools.eval_balance import PolicySwitcher
-        ctrl = PolicySwitcher(args.policy, lib)
+        from tools.eval_balance import ExpertSwitcher, PolicySwitcher
+        paths = args.policy.split(",")
+        ctrl = PolicySwitcher(paths[0], lib) if len(paths) == 1 else ExpertSwitcher(paths, lib)
         env = DoublePendulumCartEnv(control_strategy=ForceControl(max_force=ctrl.max_force))
         env.set_curriculum(1.0)
     else:

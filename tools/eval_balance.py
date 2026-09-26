@@ -72,6 +72,43 @@ class PolicyController:
         return np.array([self.force(state) / max_force], dtype=np.float32)
 
 
+class ExpertSwitcher:
+    """Goal-gated mixture: one ``--goals expert:<NAME>`` policy per equilibrium,
+    selected by the requested goal, behind the same interface as
+    :class:`PolicySwitcher`."""
+
+    def __init__(self, paths: list[str], lib: dict) -> None:
+        self.experts: dict[str, PolicyController] = {}
+        for path in paths:
+            c = PolicyController(path)
+            name = torch.load(path, map_location="cpu", weights_only=False)["meta"]["goals"][0]
+            c.goal = NAMES.index(name)
+            self.experts[name] = c
+        missing = set(NAMES) - set(self.experts)
+        if missing:
+            raise ValueError(f"no expert for {sorted(missing)}")
+        self.max_force = next(iter(self.experts.values())).max_force
+        self.lib = lib
+        self.phase = "hold"
+        self.reset("DD")
+
+    def reset(self, initial: str | np.ndarray | None = "DD") -> None:
+        for c in self.experts.values():
+            c.reset()
+        if isinstance(initial, str):
+            self.current = self.target = initial
+
+    def request(self, target: str) -> None:
+        self.current = self.target = target
+
+    @property
+    def settled(self) -> bool:
+        return True
+
+    def action(self, state: np.ndarray, max_force: float) -> np.ndarray:
+        return self.experts[self.target].action(state, max_force)
+
+
 class PolicySwitcher(PolicyController):
     """A goal-conditioned policy behind :class:`SwitchingController`'s interface
     (``reset(src)``, ``request(dst)``, ``settled``, ``current``, ``lib``), so

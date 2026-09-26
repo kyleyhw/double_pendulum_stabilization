@@ -47,8 +47,8 @@ Design choices that differ from ``src/train_sac.py`` (and why)
   where :math:`e_i` is pole *i*'s angle from upright. Leaving
   :math:`|x| \le x_{\rm soft}` terminates the episode (no further reward).
 
-Goal-conditioned mode (``--goals all``, Phase 6)
-------------------------------------------------
+Goal-conditioned mode (``--goals all`` / ``--goals expert:<NAME>``, Phase 6)
+----------------------------------------------------------------------------
 The same recipe for all four equilibria (DD, UU, DU, UD —
 :mod:`src.control.switching`). The observation gains a one-hot goal, the
 reward's :math:`e_i` are measured from the goal's pole angles, the basin
@@ -58,7 +58,10 @@ goal. The curriculum advances when the frontier success is at least
 ``--advance_at`` overall and no goal is more than 0.15 below it. With
 ``--adaptive_goals`` each goal is sampled in proportion to
 :math:`0.25 + (1 - \text{its frontier success})`, so goals that hold the
-curriculum back get more practice. Within a goal, each incoming transition is
+curriculum back get more practice. ``--goals expert:<NAME>`` trains one
+goal only (its three incoming transitions); four such experts, selected by
+the goal, form a goal-gated mixture that avoids interference between goals
+in one shared network. Within a goal, each incoming transition is
 always sampled in proportion to :math:`0.25 + (1 - \text{its frontier
 success})` (EMA over evaluations; the frontier evaluation covers every
 transition round-robin).
@@ -309,7 +312,8 @@ def load_trajectories(args: argparse.Namespace) -> dict[int, list[SwingUpTraject
     if args.goals == "UU":
         return {NAMES.index("UU"): [SwingUpTrajectory.load(args.traj)]}
     lib = load_library(args.library)
-    return {NAMES.index(g): [t for (a, b), t in lib.items() if b == g] for g in NAMES}
+    goals = [args.goals.split(":", 1)[1]] if args.goals.startswith("expert:") else list(NAMES)
+    return {NAMES.index(g): [t for (a, b), t in lib.items() if b == g] for g in goals}
 
 
 def train(args: argparse.Namespace) -> None:
@@ -442,9 +446,13 @@ def train(args: argparse.Namespace) -> None:
 
 def build_argparser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--goals", default="UU", choices=["UU", "all"],
+    ap.add_argument("--goals", default="UU",
+                    choices=["UU", "all"] + [f"expert:{n}" for n in NAMES],
                     help="UU: Phase S (swing-up + balance). all: goal-conditioned switching "
-                         "between the four equilibria (Phase 6) along the switching library.")
+                         "between the four equilibria (Phase 6) along the switching library. "
+                         "expert:<NAME>: only the three transitions into NAME (one expert of "
+                         "a goal-gated mixture; same 12-D observation as 'all', so it can be "
+                         "warm-started from an 'all' checkpoint).")
     ap.add_argument("--adaptive_goals", action="store_true",
                     help="(--goals all) sample goals in proportion to their frontier failure")
     ap.add_argument("--save_buffer", action="store_true",
