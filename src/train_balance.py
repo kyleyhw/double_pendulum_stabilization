@@ -108,14 +108,15 @@ def make_obs(states: np.ndarray, goals: np.ndarray | None = None) -> np.ndarray:
     return np.concatenate([obs, onehot], axis=1)
 
 
-def balance_reward(states: np.ndarray, x_soft: float, goals: np.ndarray | None = None
-                   ) -> np.ndarray:
-    """Per-step reward (module docstring) relative to each env's goal (default up-up)."""
+def balance_reward(states: np.ndarray, x_soft: float, goals: np.ndarray | None = None,
+                   x_weight: float = 0.05) -> np.ndarray:
+    """Per-step reward (module docstring) relative to each env's goal (default up-up);
+    ``x_weight`` scales the cart-centring penalty."""
     target = GOAL_ANGLES[1] if goals is None else GOAL_ANGLES[np.atleast_1d(goals)]
     e = wrap_angle(states[:, 1:3] - target)
     gauss = np.exp(-(e ** 2).sum(axis=1) / (2.0 * 0.25 ** 2))
     height = (1.0 + np.cos(e[:, 0])) * (1.0 + np.cos(e[:, 1])) / 4.0
-    x_pen = 0.05 * (states[:, 0] / x_soft) ** 2
+    x_pen = x_weight * (states[:, 0] / x_soft) ** 2
     v_pen = 0.002 * np.minimum((states[:, 4:6] ** 2).sum(axis=1), 50.0)
     return 0.5 * gauss + 0.5 * height - x_pen - v_pen
 
@@ -134,7 +135,7 @@ class InitSampler:
 
     def __init__(self, trajs: dict[int, list[SwingUpTrajectory]], rng: np.random.Generator,
                  r_start: float = 0.05, r_max: float = 0.25, r_step: float = 0.05,
-                 tau_step: float = 0.1, basin_frac: float = 0.25) -> None:
+                 tau_step: float = 0.1, basin_frac: float = 0.25, basin_x: float = 0.5) -> None:
         self.trajs = trajs
         self.goals = sorted(trajs)
         self.rng = rng
@@ -145,6 +146,7 @@ class InitSampler:
         self.reach_max = max(t.duration for ts in trajs.values() for t in ts)
         self.tau_step = tau_step
         self.basin_frac = basin_frac
+        self.basin_x = basin_x
         self.goal_weights = np.full(len(self.goals), 1.0 / len(self.goals))
         # Per-transition frontier success (EMA) and sampling weights within each goal.
         self.traj_success = {g: np.ones(len(ts)) for g, ts in trajs.items()}
@@ -163,7 +165,7 @@ class InitSampler:
         r = self.r if r is None else r
         n = len(goals)
         s = np.zeros((n, 6))
-        s[:, 0] = self.rng.uniform(-0.5, 0.5, n)
+        s[:, 0] = self.rng.uniform(-self.basin_x, self.basin_x, n)
         s[:, 1:3] = GOAL_ANGLES[goals] + self.rng.uniform(-r, r, (n, 2))
         s[:, 3] = self.rng.uniform(-0.5, 0.5, n)
         s[:, 4:6] = self.rng.uniform(-2 * r, 2 * r, (n, 2))
@@ -323,7 +325,8 @@ def train(args: argparse.Namespace) -> None:
     multi = args.goals != "UU"
     trajs = load_trajectories(args)
     p = next(iter(trajs.values()))[0].params
-    sampler = InitSampler(trajs, rng, tau_step=args.tau_step)
+    sampler = InitSampler(trajs, rng, tau_step=args.tau_step, basin_x=args.basin_x,
+                          basin_frac=args.basin_frac)
     sim = BatchedBalanceSim(p, args.n_envs, args.frame_skip, args.max_force, args.wind_std,
                             args.x_soft, rng)
     eval_sim = BatchedBalanceSim(p, args.eval_episodes, args.frame_skip, args.max_force,
@@ -339,6 +342,13 @@ def train(args: argparse.Namespace) -> None:
     if args.load_buffer:
         load_buffer(agent.buffer, args.load_buffer)
         args.warmup = 0
+        if args.buffer_x_penalty is not None and args.buffer_x_penalty != args.x_penalty:
+            # Relabel stored rewards to the current cart penalty; x is recoverable
+            # from the scaled next observation (obs[0] = OBS_SCALE[0] * x).
+            buf = agent.buffer
+            x = buf.next_states[:buf.size, 0] / OBS_SCALE[0]
+            buf.rewards[:buf.size] += ((args.buffer_x_penalty - args.x_penalty)
+                                       * (x / args.x_soft) ** 2).astype(np.float32)
 
     os.makedirs(args.log_dir, exist_ok=True)
     run = args.run_name or f"balance_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -380,7 +390,7 @@ def train(args: argparse.Namespace) -> None:
         else:
             actions = np.atleast_2d(agent.select_action(obs)).astype(np.float32)
         nxt = sim.step(actions)
-        rew = balance_reward(nxt, args.x_soft, goals)
+        rew = balance_reward(nxt, args.x_soft, goals, args.x_penalty)
         term = np.abs(nxt[:, 0]) > args.x_soft
         agent.buffer.push_batch(obs, actions, rew.astype(np.float32),
                                 make_obs(nxt, goal_arg(goals)), term.astype(np.float32))
@@ -458,6 +468,15 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--save_buffer", action="store_true",
                     help="also write the replay buffer next to each 'latest' checkpoint")
     ap.add_argument("--load_buffer", default=None, help="replay buffer .npz to resume with")
+    ap.add_argument("--buffer_x_penalty", type=float, default=None,
+                    help="x_penalty the loaded buffer's rewards were computed with; if it "
+                         "differs from --x_penalty the rewards are relabelled")
+    ap.add_argument("--x_penalty", type=float, default=0.05,
+                    help="weight of the cart-centring penalty (x / x_soft)^2")
+    ap.add_argument("--basin_x", type=float, default=0.5,
+                    help="cart-position half-range of basin starts [m]")
+    ap.add_argument("--basin_frac", type=float, default=0.25,
+                    help="fraction of trajectory-stage resets drawn from the goal basins")
     ap.add_argument("--traj", default=DEFAULT_TRAJ)
     ap.add_argument("--library", default=DEFAULT_LIBRARY)
     ap.add_argument("--max_force", type=float, default=100.0)

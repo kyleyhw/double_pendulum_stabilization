@@ -1,0 +1,51 @@
+{
+  "milestones": {
+    "full": 20000
+  },
+  "curriculum": {
+    "r": 0.25,
+    "reach": 4.0,
+    "reach_max": 4.0
+  },
+  "transitions": 300000,
+  "updates": 150000,
+  "wall_s": 1635.9772996902466,
+  "args": {
+    "goals": "expert:UU",
+    "adaptive_goals": false,
+    "save_buffer": false,
+    "load_buffer": "logs/phase6_expert_UU_buffer.npz",
+    "buffer_x_penalty": 0.05,
+    "x_penalty": 0.3,
+    "basin_x": 2.5,
+    "basin_frac": 0.5,
+    "traj": "/home/user/double_pendulum_stabilization/src/control/data/swingup_d1.npz",
+    "library": "/home/user/double_pendulum_stabilization/src/control/data/switching_d1.npz",
+    "max_force": 100.0,
+    "frame_skip": 4,
+    "wind_std": 1.0,
+    "x_soft": 3.5,
+    "n_envs": 16,
+    "episode_len": 250,
+    "total_transitions": 300000,
+    "warmup": 0,
+    "utd": 0.5,
+    "hidden_dim": 256,
+    "gamma": 0.99,
+    "lr": 0.0001,
+    "batch_size": 256,
+    "replay_capacity": 1000000,
+    "alpha_max": 0.3,
+    "tau_step": 0.1,
+    "advance_at": 0.9,
+    "eval_every": 20000,
+    "eval_episodes": 33,
+    "save_every": 100000,
+    "stop_when_mastered": false,
+    "threads": 1,
+    "seed": 0,
+    "log_dir": "logs",
+    "run_name": "phase6_center_UU",
+    "load": "logs/phase6_expert_UU_full.pth"
+  }
+}

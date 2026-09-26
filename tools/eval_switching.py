@@ -165,9 +165,14 @@ def main() -> None:
         lines = [
             "# Equilibrium switching evaluation (δ = 1)",
             "",
-            (f"Goal-conditioned RL policy `{args.policy}` (`src/train_balance.py --goals all`); "
-             "the trajectory columns describe the library it was trained along, not "
-             "what the policy does. "
+            ((f"Goal-gated mixture of four RL experts `{args.policy}` "
+              "(`src/train_balance.py --goals expert:<NAME>`, one per target equilibrium, "
+              "selected by the requested goal; a switch starts once the current "
+              "equilibrium is held with |x|, |ẋ| < 0.3). "
+              if "," in args.policy else
+              f"Goal-conditioned RL policy `{args.policy}` (`src/train_balance.py --goals all`). ")
+             + "The T and nominal-force columns describe the switching library the policy "
+             "was trained along (start states only), not what the policy does. "
              if args.policy else
              "Model-based switching between the four equilibria (`src/control/switching.py`): "
              "one multiple-shooting trajectory per ordered pair, TVLQR tracking, LQR hold at "

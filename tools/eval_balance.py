@@ -30,7 +30,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.agent.sac import GaussianPolicy  # noqa: E402
 from src.control.swingup import wrap_angle  # noqa: E402
-from src.control.switching import NAMES  # noqa: E402
+from src.control.switching import ANGLES, NAMES  # noqa: E402
 from src.env.double_pendulum import DoublePendulumCartEnv  # noqa: E402
 from src.strategies.controls import ForceControl  # noqa: E402
 from src.train_balance import make_obs  # noqa: E402
@@ -74,10 +74,14 @@ class PolicyController:
 
 class ExpertSwitcher:
     """Goal-gated mixture: one ``--goals expert:<NAME>`` policy per equilibrium,
-    selected by the requested goal, behind the same interface as
-    :class:`PolicySwitcher`."""
+    selected by the goal, behind :class:`SwitchingController`'s interface.
 
-    def __init__(self, paths: list[str], lib: dict) -> None:
+    Like the model-based controller's ``ready_tol``, a requested switch waits
+    until the current equilibrium is held (both poles in the strict band) with
+    the cart near the centre (``|x|, |ẋ| < ready_x``); the next transition then
+    starts from where its training distribution does."""
+
+    def __init__(self, paths: list[str], lib: dict, ready_x: float = 0.3) -> None:
         self.experts: dict[str, PolicyController] = {}
         for path in paths:
             c = PolicyController(path)
@@ -89,6 +93,7 @@ class ExpertSwitcher:
             raise ValueError(f"no expert for {sorted(missing)}")
         self.max_force = next(iter(self.experts.values())).max_force
         self.lib = lib
+        self.ready_x = ready_x
         self.phase = "hold"
         self.reset("DD")
 
@@ -99,14 +104,21 @@ class ExpertSwitcher:
             self.current = self.target = initial
 
     def request(self, target: str) -> None:
-        self.current = self.target = target
+        self.target = target
 
     @property
     def settled(self) -> bool:
-        return True
+        return self.current == self.target
+
+    def _ready(self, state: np.ndarray) -> bool:
+        err = np.abs(wrap_angle(state[1:3] - np.array(ANGLES[self.current])))
+        return bool(np.all(err < 0.17) and abs(state[0]) < self.ready_x
+                    and abs(state[3]) < self.ready_x)
 
     def action(self, state: np.ndarray, max_force: float) -> np.ndarray:
-        return self.experts[self.target].action(state, max_force)
+        if self.target != self.current and self._ready(state):
+            self.current = self.target
+        return self.experts[self.current].action(state, max_force)
 
 
 class PolicySwitcher(PolicyController):
