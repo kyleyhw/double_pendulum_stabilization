@@ -34,7 +34,9 @@ from src.train_balance import (  # noqa: E402
     GOAL_ANGLES,
     InitSampler,
     balance_reward,
+    load_buffer,
     make_obs,
+    save_buffer,
 )
 
 
@@ -125,6 +127,38 @@ class TestBalanceTrainerPieces(unittest.TestCase):
         np.testing.assert_allclose(s, np.broadcast_to(traj.states[0], s.shape), atol=0.05 + 1e-9)
         smp.load_state_dict({"r": 0.25, "tau_min": 3.0})  # legacy single-goal checkpoint
         self.assertAlmostEqual(smp.reach, traj.duration - 3.0)
+
+    def test_transition_weighting(self):
+        lib = load_library()
+        trajs = {NAMES.index(g): [t for (a, b), t in lib.items() if b == g] for g in NAMES}
+        smp = InitSampler(trajs, np.random.default_rng(0))
+        smp.reach = 2.5
+        _, goals, _ = smp.frontier(48)
+        idx = smp.last_traj_idx
+        self.assertEqual(set(idx[goals == 1]), {0, 1, 2})  # every transition measured
+        ok = ~((goals == 1) & (idx == 2))
+        smp.record_transitions(goals, idx, ok)
+        w = smp.traj_weights[1]
+        self.assertGreater(w[2], w[0])
+        self.assertAlmostEqual(w.sum(), 1.0)
+
+    def test_buffer_roundtrip(self):
+        import tempfile
+
+        import torch
+
+        from src.agent.sac import SACAgent
+        a = SACAgent(12, 1, replay_capacity=50, device=torch.device("cpu"))
+        for k in range(8):  # wraps the ring buffer
+            a.buffer.push_batch(np.full((10, 12), k, np.float32), np.zeros((10, 1), np.float32),
+                                np.arange(10, dtype=np.float32) + 10 * k,
+                                np.zeros((10, 12), np.float32), np.zeros(10, np.float32))
+        b = SACAgent(12, 1, replay_capacity=50, device=torch.device("cpu"))
+        with tempfile.TemporaryDirectory() as d:
+            save_buffer(a.buffer, os.path.join(d, "buf.npz"))
+            load_buffer(b.buffer, os.path.join(d, "buf.npz"))
+        self.assertEqual(b.buffer.size, 50)
+        np.testing.assert_array_equal(np.sort(b.buffer.rewards), np.arange(30, 80))
 
 
 if __name__ == "__main__":

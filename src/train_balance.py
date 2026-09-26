@@ -58,7 +58,10 @@ goal. The curriculum advances when the frontier success is at least
 ``--advance_at`` overall and no goal is more than 0.15 below it. With
 ``--adaptive_goals`` each goal is sampled in proportion to
 :math:`0.25 + (1 - \text{its frontier success})`, so goals that hold the
-curriculum back get more practice.
+curriculum back get more practice. Within a goal, each incoming transition is
+always sampled in proportion to :math:`0.25 + (1 - \text{its frontier
+success})` (EMA over evaluations; the frontier evaluation covers every
+transition round-robin).
 
 Training uses the vectorised plant in :mod:`src.control.swingup` (verified
 equal to the environment's RK4 to :math:`10^{-12}`); evaluation
@@ -140,6 +143,10 @@ class InitSampler:
         self.tau_step = tau_step
         self.basin_frac = basin_frac
         self.goal_weights = np.full(len(self.goals), 1.0 / len(self.goals))
+        # Per-transition frontier success (EMA) and sampling weights within each goal.
+        self.traj_success = {g: np.ones(len(ts)) for g, ts in trajs.items()}
+        self.traj_weights = {g: np.full(len(ts), 1.0 / len(ts)) for g, ts in trajs.items()}
+        self.last_traj_idx = np.zeros(0, dtype=int)
 
     @property
     def stage(self) -> str:
@@ -159,14 +166,34 @@ class InitSampler:
         s[:, 4:6] = self.rng.uniform(-2 * r, 2 * r, (n, 2))
         return s
 
-    def on_trajectory(self, goals: np.ndarray, reach: np.ndarray) -> np.ndarray:
+    def on_trajectory(self, goals: np.ndarray, reach: np.ndarray,
+                      traj_idx: np.ndarray | None = None) -> np.ndarray:
+        """Noisy states at time-to-go ``reach`` on a trajectory into each goal
+        (drawn by ``traj_weights`` unless ``traj_idx`` is given)."""
         s = np.empty((len(goals), 6))
+        idx = np.empty(len(goals), dtype=int)
         for i, (g, h) in enumerate(zip(goals, reach, strict=True)):
             ts = self.trajs[int(g)]
-            t = ts[self.rng.integers(len(ts))]
+            k = (int(traj_idx[i]) if traj_idx is not None
+                 else int(self.rng.choice(len(ts), p=self.traj_weights[int(g)])))
+            t = ts[k]
             j = int(round(max(t.duration - h, 0.0) / t.params.dt))
             s[i] = t.states[j]
+            idx[i] = k
+        self.last_traj_idx = idx
         return s + self.rng.uniform(-0.05, 0.05, s.shape)
+
+    def record_transitions(self, goals: np.ndarray, traj_idx: np.ndarray, ok: np.ndarray,
+                           floor: float = 0.25, ema: float = 0.5) -> None:
+        """Update per-transition frontier success (EMA) and resample weights so the
+        transitions that fail get more practice within their goal."""
+        for g in np.unique(goals):
+            for k in np.unique(traj_idx[goals == g]):
+                m = (goals == g) & (traj_idx == k)
+                prev = self.traj_success[int(g)][k]
+                self.traj_success[int(g)][k] = ema * prev + (1 - ema) * ok[m].mean()
+            w = floor + 1.0 - self.traj_success[int(g)]
+            self.traj_weights[int(g)] = w / w.sum()
 
     def _goals(self, n: int) -> np.ndarray:
         return self.rng.choice(self.goals, size=n, p=self.goal_weights)
@@ -192,7 +219,12 @@ class InitSampler:
         goals = np.resize(np.array(self.goals), n)
         if self.reach <= 0.0:
             return self.basin(goals), goals, 0.0
-        return self.on_trajectory(goals, np.full(n, self.reach)), goals, self.reach
+        # Round-robin over each goal's transitions so every one is measured.
+        idx = np.zeros(n, dtype=int)
+        for g in self.goals:
+            m = np.flatnonzero(goals == g)
+            idx[m] = np.arange(len(m)) % len(self.trajs[g])
+        return self.on_trajectory(goals, np.full(n, self.reach), idx), goals, self.reach
 
     def advance(self) -> str:
         if self.reach <= 0.0 and self.r < self.r_max - 1e-9:
@@ -251,8 +283,26 @@ def evaluate_frontier(agent: SACAgent, sim: BatchedBalanceSim, sampler: InitSamp
         ok &= np.abs(s[:, 0]) <= sim.x_soft
         if j >= steps - last:
             ok &= np.all(np.abs(wrap_angle(s[:, 1:3] - target)) < STRICT, axis=1)
+    if reach > 0.0:
+        sampler.record_transitions(goals, sampler.last_traj_idx, ok)
     per_goal = {int(g): float(ok[goals == g].mean()) for g in np.unique(goals)}
     return float(ok.mean()), float(min(per_goal.values())), per_goal
+
+
+def save_buffer(buf, path: str) -> None:
+    """Persist the filled part of a SAC replay buffer (so a resume keeps its data)."""
+    n = buf.size
+    order = (np.arange(n) + (buf.pos if n == buf.capacity else 0)) % buf.capacity
+    np.savez(path, states=buf.states[order], actions=buf.actions[order],
+             rewards=buf.rewards[order], next_states=buf.next_states[order],
+             dones=buf.dones[order])
+
+
+def load_buffer(buf, path: str) -> None:
+    d = np.load(path)
+    n = min(len(d["rewards"]), buf.capacity)
+    buf.push_batch(d["states"][-n:], d["actions"][-n:], d["rewards"][-n:],
+                   d["next_states"][-n:], d["dones"][-n:])
 
 
 def load_trajectories(args: argparse.Namespace) -> dict[int, list[SwingUpTrajectory]]:
@@ -282,6 +332,9 @@ def train(args: argparse.Namespace) -> None:
     if args.load:
         payload = agent.load(args.load)
         sampler.load_state_dict(payload.get("curriculum", {}))
+    if args.load_buffer:
+        load_buffer(agent.buffer, args.load_buffer)
+        args.warmup = 0
 
     os.makedirs(args.log_dir, exist_ok=True)
     run = args.run_name or f"balance_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -297,6 +350,8 @@ def train(args: argparse.Namespace) -> None:
     def save(tag: str) -> str:
         path = os.path.join(args.log_dir, f"{run}_{tag}.pth")
         agent.save(path, extra={"curriculum": sampler.state_dict(), "meta": meta})
+        if tag == "latest" and args.save_buffer:
+            save_buffer(agent.buffer, os.path.join(args.log_dir, f"{run}_buffer.npz"))
         return path
 
     def goal_arg(g: np.ndarray) -> np.ndarray | None:
@@ -392,6 +447,9 @@ def build_argparser() -> argparse.ArgumentParser:
                          "between the four equilibria (Phase 6) along the switching library.")
     ap.add_argument("--adaptive_goals", action="store_true",
                     help="(--goals all) sample goals in proportion to their frontier failure")
+    ap.add_argument("--save_buffer", action="store_true",
+                    help="also write the replay buffer next to each 'latest' checkpoint")
+    ap.add_argument("--load_buffer", default=None, help="replay buffer .npz to resume with")
     ap.add_argument("--traj", default=DEFAULT_TRAJ)
     ap.add_argument("--library", default=DEFAULT_LIBRARY)
     ap.add_argument("--max_force", type=float, default=100.0)
