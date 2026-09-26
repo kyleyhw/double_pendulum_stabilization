@@ -1352,3 +1352,107 @@ Robust to 5× wind and to skipping the settle phase (30/30 each).
 `env.force_mag` and drove the env through `VelocityControl`; it now runs the
 swing-up controller through `ForceControl`.
 
+
+## Phase 4.7 (2026-09-26): robustness of the Phase R controller
+
+`tools/robustness_sweep.py` → `docs/robustness_report.md` (+
+`docs/images/robustness_basins.png`), all on the real env at
+:math:`\delta = 1`, success = inside the soft cart bound throughout and
+strict for the final second.
+
+| Quantity | Recoverable |
+|---|---:|
+| Pole-angle error from rest, any sign combination | ±6.9° |
+| … both poles leaning the same way | ±11.5° |
+| Pole rates from upright, worst direction | ±0.4 rad/s |
+| One-step cart impulse while balancing / mid-swing | 8 / ≥ 10 N·s |
+| Wind σ (swing-up + balance) | 40 N (90 % at 60 N) |
+| Actuator limit | ≥ 25 N (nominal peak 26.4 N) |
+| Cart mass ×0.7–1.3, cart friction ≤ 0.5, pole friction ≤ 0.05 | 100 % |
+| Pole masses / lengths | fails beyond −10…+20 % (l₂: only +10 % tolerated) |
+
+The balance basin is small and sheared (bending the chain is much harder
+to correct than tilting it), but the swing-up hands over with < 0.08°
+error, so the controller never needs a large basin. The weak spot is model
+mismatch in the poles: the swing is feed-forward dominated. A gain sweep
+shows the usual trade-off — R = 1–3 enlarges the basin (25 % → 42 % of a
+±29° grid) but drops wind rejection at σ = 40 N from 100 % to 20–40 % — so
+the default stays R = 0.01.
+
+## Phase T (2026-09-26): model-based switching between all four equilibria
+
+`src/control/switching.py`: one multiple-shooting trajectory per ordered
+pair of DD / UU / DU / UD (Phase R transcription, both turn-over
+directions tried per pole, cheapest kept; all T = 4 s, peak nominal force
+11–61 N), TVLQR tracking, and an LQR hold at every equilibrium
+(`src/control/data/switching_d1.npz`, built by
+`tools/eval_switching.py --rebuild` in 28 min single-threaded).
+
+Result (`docs/reports/switching_d1.md`, 10 seeds each, real env,
+δ = 1): **12/12 transitions at 100 %**, final errors ≤ 0.04°, and 5/5
+single episodes chaining all 12 transitions
+(DD→UU→DD→DU→DD→UD→UU→DU→UU→UD→DU→UD→DD). Interactive:
+`python src/run_lqr.py --switching` (keys 1–4).
+
+## Phase S (2026-09-26): reverse-curriculum SAC — the first RL policy that balances
+
+`src/train_balance.py` (NEXT_STEPS Option B). Changes relative to every
+earlier RL phase, each aimed at a diagnosed failure:
+
+* **Start where success is possible.** Episodes start inside the upright
+  basin (angles ±r, rates ±2r, cart ±0.5), r = 0.05 → 0.25 rad, then on the
+  Phase R swing-up trajectory at a time-to-go that grows 0.1 s per
+  mastered step until the start is hanging (plus the env's ±0.05 reset
+  noise; 25 % of resets stay in the basin). A step is mastered when ≥ 90 %
+  of 32 deterministic rollouts from the frontier end strictly upright for
+  a whole second. The trajectory seeds *states only* — no action targets.
+* **`ForceControl`, F_max = 100 N** (not `VelocityControl`'s 10⁵ N per unit
+  action), action repeat 4 (50 Hz) so γ = 0.99 spans 2 s.
+* **Bounded dense reward** 0.5·Gaussian(e, 0.25 rad) + 0.5·height term −
+  small cart / rate penalties; leaving the soft cart bound terminates.
+* Physics fixed at δ = 1 (curriculum over start states, not physics);
+  fixed observation scaling; α clamped at 0.3.
+
+| Milestone | Transitions | Wall (2 threads) |
+|---|---:|---:|
+| Basin r = 0.25 rad | 340 k | 25 min |
+| Frontier at hanging | 2.36 M | 2.7 h |
+
+The trajectory stage was not monotone: at trajectory times τ = 1.8, 1.4,
+1.0, 0.8, 0.6 and 0.5 s (start of swing = 0) frontier success oscillated
+between 0 and ~0.8 for 6–12 evaluations (120–240 k transitions) before the
+step cleared. TVLQR recovers 92–100 % of the same starts, so these were
+optimisation stalls, not infeasible frontiers.
+
+**Real-env evaluation** (`tools/eval_balance.py`, 100 × 20 s each, δ = 1,
+wind σ = 1 N; `docs/reports/phaseS_basin_r025.md`,
+`docs/reports/phaseS_hanging.md`):
+
+| Checkpoint | Start | Terminal-1 s strict = 100 % | Inside soft bound | Sustained strict | Final error |
+|---|---|---:|---:|---:|---:|
+| `phaseS_seed0_basin.pth` | basin r = 0.25 | 99 / 100 | 93 % | 19.1 s | 2.7° |
+| `phaseS_seed0_hanging.pth` | basin r = 0.25 | **100 / 100** | 100 % | 19.7 s | 1.9° |
+| `phaseS_seed0_hanging.pth` | hanging (`down` reset) | **99 / 100** | 98 % | 17.3 s | 3.6° |
+
+For scale: 50 Hz LQR captures 53–64 % of the r = 0.25 basin, and every
+earlier RL phase scored 0 % terminal strict from hanging. The learned
+policy is less precise at rest than LQR (≈ 2–4° vs 0.04°) but reaches
+upright sooner than the 4 s minimum-effort trajectory, spending its full
+100 N budget.
+
+Stress tests of the same policy (`tools/eval_balance.py --stress`, full
+swing-up from hanging, 10 seeds per cell) against the Phase R controller
+(`docs/robustness_report.md`):
+
+| Perturbation | Phase S policy | Phase R controller |
+|---|---:|---:|
+| Largest cart impulse at 100 % | 4 N·s | 8 N·s |
+| Wind σ = 20 / 40 N | 90 % / 90 % | 100 % / 100 % |
+| m₁ ×0.8 / m₂ ×1.2 | 100 % / 100 % | 0 % / 10 % |
+| l₁ ×0.8 / ×0.9 | 20 % / 60 % | 100 % / 100 % |
+| l₂ ×0.9 / ×1.1 | 0 % / 20 % | 0 % / 100 % |
+
+The learned policy is less stiff (weaker against impulses and strong wind)
+but, without a feed-forward trajectory, tolerates pole-mass errors that
+break the designed controller; both are sensitive to the upper pole's
+length.

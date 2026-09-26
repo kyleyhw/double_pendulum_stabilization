@@ -29,6 +29,7 @@ import torch
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.agent.sac import GaussianPolicy  # noqa: E402
+from src.control.swingup import wrap_angle  # noqa: E402
 from src.control.switching import NAMES  # noqa: E402
 from src.env.double_pendulum import DoublePendulumCartEnv  # noqa: E402
 from src.strategies.controls import ForceControl  # noqa: E402
@@ -133,6 +134,66 @@ def evaluate(model: str, episodes: int, radius: float, horizon: float = 20.0,
     return {"basin": summarize(basin), "hanging": summarize(hanging), "ctrl": ctrl}
 
 
+def stress(model: str, seeds: int = 10) -> list[str]:
+    """Phase 4.7-style stress rows (markdown) for a policy, full swing-up from hanging.
+
+    Same success rule and perturbations as ``tools/robustness_sweep.py`` sections
+    C-E: one 5 ms cart impulse 8 s into the episode (balancing), wind, and
+    plant-parameter mismatch."""
+    ctrl = PolicyController(model)
+
+    def env_with(wind: float | None = None, **overrides) -> DoublePendulumCartEnv:
+        env = DoublePendulumCartEnv(control_strategy=ForceControl(max_force=ctrl.max_force))
+        if wind is not None:
+            env.set_wind_pinned(wind)
+        env.set_curriculum(1.0)
+        for k, v in overrides.items():
+            setattr(env, k, v)
+        return env
+
+    def ok(env, seed, impulse=0.0, horizon=20.0) -> bool:
+        env.reset(seed=seed, options={"mode": "down"})
+        ctrl.reset()
+        n = int(round(horizon / env.dt))
+        last = int(round(1.0 / env.dt))
+        for j in range(n):
+            if impulse and j == int(round(8.0 / env.dt)):
+                env.apply_impulse(impulse / env.dt)
+            env.step(ctrl.action(env.state, env.control_strategy.max_force))
+            if abs(env.state[0]) > env.x_soft:
+                return False
+            if j >= n - last and np.any(np.abs(wrap_angle(env.state[1:3] - np.pi)) >= 0.17):
+                return False
+        return True
+
+    def rate(env, **kw) -> str:
+        return f"{100 * np.mean([ok(env, s, **kw) for s in range(seeds)]):.0f} %"
+
+    base = env_with()
+    impulses = [1, 2, 4, 8]
+    winds = [1, 5, 10, 20, 40]
+    factors = [0.8, 0.9, 1.1, 1.2]
+    lines = [
+        f"Swing-up from hanging, {seeds} seeds per cell; success as in "
+        "`docs/robustness_report.md` (inside the soft bound, strict for the final second).",
+        "",
+        "| Cart impulse 8 s in [N·s] | " + " | ".join(map(str, impulses)) + " |",
+        "|---|" + "---:|" * len(impulses),
+        "| Success | " + " | ".join(rate(base, impulse=J) for J in impulses) + " |",
+        "",
+        "| Wind σ [N] | " + " | ".join(map(str, winds)) + " |",
+        "|---|" + "---:|" * len(winds),
+        "| Success | " + " | ".join(rate(env_with(wind=w)) for w in winds) + " |",
+        "",
+        "| Parameter | " + " | ".join(f"×{f:g}" for f in factors) + " |",
+        "|---|" + "---:|" * len(factors),
+    ]
+    for name in ("M", "m1", "m2", "l1", "l2"):
+        cells = [rate(env_with(**{name: getattr(base, name) * f})) for f in factors]
+        lines.append(f"| {name} | " + " | ".join(cells) + " |")
+    return lines
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--model", required=True)
@@ -140,6 +201,8 @@ def main() -> None:
     ap.add_argument("--radius", type=float, default=0.25)
     ap.add_argument("--horizon", type=float, default=20.0)
     ap.add_argument("--report", default=None)
+    ap.add_argument("--stress", action="store_true",
+                    help="append impulse / wind / model-mismatch tables (10 seeds each)")
     args = ap.parse_args()
     res = evaluate(args.model, args.episodes, args.radius, args.horizon)
     ctrl = res.pop("ctrl")
@@ -157,6 +220,9 @@ def main() -> None:
     table = [header, "|---|---:|---:|"]
     table += [f"| {k} | {f(res['basin'])} | {f(res['hanging'])} |" for k, f in rows]
     print("\n".join(table))
+    stress_lines = stress(args.model) if args.stress else []
+    if stress_lines:
+        print("\n".join(stress_lines))
     if args.report:
         lines = [
             "# Phase S policy evaluation (δ = 1)",
@@ -168,8 +234,9 @@ def main() -> None:
             "",
             *table,
             "",
+            *(["## Stress tests", "", *stress_lines, ""] if stress_lines else []),
             f"Command: `python tools/eval_balance.py --model {args.model} --episodes "
-            f"{args.episodes} --radius {args.radius:g}`",
+            f"{args.episodes} --radius {args.radius:g}" + (" --stress" if args.stress else "") + "`",
             "",
         ]
         os.makedirs(os.path.dirname(os.path.abspath(args.report)), exist_ok=True)
