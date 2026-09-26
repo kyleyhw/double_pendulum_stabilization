@@ -31,7 +31,9 @@ double_pendulum_stabilization/
 │   ├── agent/ppo.py                 # PPO + GAE + tanh squash + minibatches
 │   ├── control/
 │   │   ├── swingup.py               # trajopt swing-up + TVLQR + LQR balance (works)
+│   │   ├── switching.py             # switching between all four equilibria (works)
 │   │   ├── data/swingup_d1.npz      # nominal swing-up trajectory at δ = 1
+│   │   ├── data/switching_d1.npz    # 12 equilibrium-to-equilibrium trajectories
 │   │   ├── lqr.py                   # continuous-time LQR at up-up
 │   │   └── check_controllability.py
 │   ├── utils/
@@ -39,6 +41,7 @@ double_pendulum_stabilization/
 │   │   ├── schedules.py             # linear / cosine schedules
 │   │   └── visualizer.py            # Pygame renderer
 │   ├── train.py                     # vectorised PPO trainer
+│   ├── train_balance.py             # SAC + reverse curriculum (Phase S / Phase 6)
 │   ├── simulate.py                  # play a checkpoint with optional MP4 recording
 │   ├── run_lqr.py                   # interactive swing-up + balance demo
 │   ├── evaluate_diagnostics.py      # deterministic-policy report
@@ -47,8 +50,13 @@ double_pendulum_stabilization/
 │   ├── test_physics.py              # energy conservation under RK4
 │   ├── test_components.py           # PPO, normaliser, integrators, bounds
 │   ├── test_energy_reward.py        # EnergyShapingReward
-│   └── test_swingup.py              # swing-up plant model, trajectory, closed loop
-├── tools/eval_swingup.py            # closed-loop swing-up evaluation + report
+│   ├── test_swingup.py              # swing-up plant model, trajectory, closed loop
+│   └── test_switching_and_balance.py
+├── tools/
+│   ├── eval_swingup.py              # closed-loop swing-up evaluation + report
+│   ├── eval_switching.py            # build + evaluate the switching library
+│   ├── eval_balance.py              # evaluate a Phase S / Phase 6 RL policy
+│   └── robustness_sweep.py          # stress test → docs/robustness_report.md
 ├── docs/                            # derivations, images, training reports
 ├── pyproject.toml                   # uv project, dev tooling (ruff, ty)
 └── .pre-commit-config.yaml          # ruff + ty + detect-secrets
@@ -233,10 +241,33 @@ controller outputs newtons, so drive the env with `ForceControl`. At other
 curriculum difficulties the trajectory is re-optimised automatically
 (~1–2 min; set `OMP_NUM_THREADS=1` when running several solves in parallel).
 
+### 3.5 Equilibrium switching and robustness
+
+```bash
+python src/run_lqr.py --switching          # keys 1-4: down-down / up-up / down-up / up-down
+python tools/eval_switching.py --report docs/reports/switching_d1.md
+python tools/robustness_sweep.py           # ~6 min → docs/robustness_report.md
+```
+
+### 3.6 RL that balances (reverse curriculum)
+
+```bash
+# Phase S: SAC + ForceControl, starts inside the upright basin, then walks the
+# start states back along the swing-up trajectory to hanging.
+python src/train_balance.py --stop_when_mastered --run_name phaseS
+python tools/eval_balance.py --model logs/phaseS_full.pth
+
+# Phase 6: one goal-conditioned policy for all four equilibria.
+python src/train_balance.py --goals all --stop_when_mastered --run_name phase6
+python tools/eval_switching.py --policy logs/phase6_full.pth
+```
+
 ## 4. Documentation index
 
 * [Next steps — self-contained handoff](docs/NEXT_STEPS.md) (resume point; start here)
 * [Designed swing-up evaluation at δ = 1](docs/reports/swingup_d1.md)
+* [Robustness report](docs/robustness_report.md)
+* [Equilibrium switching evaluation](docs/reports/switching_d1.md)
 * [Experiment log — campaign chronicle](docs/EXPERIMENTS.md)
 * [Physics derivation](docs/physics_derivation.md)
 * [Controllability analysis](docs/controllability_analysis.md)
