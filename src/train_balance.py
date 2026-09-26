@@ -55,7 +55,10 @@ reward's :math:`e_i` are measured from the goal's pole angles, the basin
 stage is run around every goal, and the trajectory stage starts episodes on
 the switching library's 12 transitions at a time-to-go :math:`h` before the
 goal. The curriculum advances when the frontier success is at least
-``--advance_at`` overall and no goal is more than 0.15 below it.
+``--advance_at`` overall and no goal is more than 0.15 below it. With
+``--adaptive_goals`` each goal is sampled in proportion to
+:math:`0.25 + (1 - \text{its frontier success})`, so goals that hold the
+curriculum back get more practice.
 
 Training uses the vectorised plant in :mod:`src.control.swingup` (verified
 equal to the environment's RK4 to :math:`10^{-12}`); evaluation
@@ -136,6 +139,7 @@ class InitSampler:
         self.reach_max = max(t.duration for ts in trajs.values() for t in ts)
         self.tau_step = tau_step
         self.basin_frac = basin_frac
+        self.goal_weights = np.full(len(self.goals), 1.0 / len(self.goals))
 
     @property
     def stage(self) -> str:
@@ -165,7 +169,13 @@ class InitSampler:
         return s + self.rng.uniform(-0.05, 0.05, s.shape)
 
     def _goals(self, n: int) -> np.ndarray:
-        return self.rng.choice(self.goals, size=n)
+        return self.rng.choice(self.goals, size=n, p=self.goal_weights)
+
+    def reweight(self, per_goal_success: dict[int, float], floor: float = 0.25) -> None:
+        """Sample goals in proportion to ``floor + (1 - frontier success)`` so the
+        goals holding the curriculum back get more practice."""
+        w = np.array([floor + 1.0 - per_goal_success.get(g, 0.0) for g in self.goals])
+        self.goal_weights = w / w.sum()
 
     def sample(self, n: int) -> tuple[np.ndarray, np.ndarray]:
         goals = self._goals(n)
@@ -225,10 +235,10 @@ class BatchedBalanceSim:
 
 def evaluate_frontier(agent: SACAgent, sim: BatchedBalanceSim, sampler: InitSampler,
                       n: int, multi_goal: bool, balance_time: float = 3.0
-                      ) -> tuple[float, float]:
+                      ) -> tuple[float, float, dict[int, float]]:
     """Deterministic rollouts from the frontier; returns the overall and the worst
     per-goal fraction that end strictly at the goal for the whole final second and
-    never leave the soft cart bound."""
+    never leave the soft cart bound, and the per-goal fractions."""
     s, goals, reach = sampler.frontier(n)
     ctrl_dt = sim.k * sim.p.dt
     steps = int(round((reach + balance_time) / ctrl_dt))
@@ -241,8 +251,8 @@ def evaluate_frontier(agent: SACAgent, sim: BatchedBalanceSim, sampler: InitSamp
         ok &= np.abs(s[:, 0]) <= sim.x_soft
         if j >= steps - last:
             ok &= np.all(np.abs(wrap_angle(s[:, 1:3] - target)) < STRICT, axis=1)
-    per_goal = [ok[goals == g].mean() for g in np.unique(goals)]
-    return float(ok.mean()), float(min(per_goal))
+    per_goal = {int(g): float(ok[goals == g].mean()) for g in np.unique(goals)}
+    return float(ok.mean()), float(min(per_goal.values())), per_goal
 
 
 def load_trajectories(args: argparse.Namespace) -> dict[int, list[SwingUpTrajectory]]:
@@ -332,7 +342,10 @@ def train(args: argparse.Namespace) -> None:
                 updates += 1
 
         if transitions % args.eval_every < args.n_envs and transitions >= args.warmup:
-            success, worst = evaluate_frontier(agent, eval_sim, sampler, args.eval_episodes, multi)
+            success, worst, per_goal = evaluate_frontier(agent, eval_sim, sampler,
+                                                         args.eval_episodes, multi)
+            if multi and args.adaptive_goals:
+                sampler.reweight(per_goal)
             before = (sampler.r, sampler.reach)
             passed = success >= args.advance_at and worst >= args.advance_at - 0.15
             msg = ""
@@ -347,9 +360,11 @@ def train(args: argparse.Namespace) -> None:
                 save("full")
                 msg = "  MASTERED full reach"
             recent = float(np.mean(returns[-50:])) if returns else float("nan")
+            goal_str = (" goals=" + ",".join(f"{NAMES[g]}:{v:.2f}" for g, v in per_goal.items())
+                        if multi else "")
             print(f"[{transitions:8d}] upd={updates} ep={episodes} ret={recent:7.2f} "
                   f"r={before[0]:.2f} reach={before[1]:.2f} frontier_success={success:.2f} "
-                  f"worst_goal={worst:.2f} alpha={diag.get('alpha', 0):.3f} "
+                  f"worst_goal={worst:.2f}{goal_str} alpha={diag.get('alpha', 0):.3f} "
                   f"({time.time() - t0:.0f}s){msg}", flush=True)
             log.writerow([transitions, updates, episodes, f"{recent:.3f}", sampler.stage,
                           f"{before[0]:.3f}", f"{before[1]:.3f}", f"{success:.3f}",
@@ -375,6 +390,8 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--goals", default="UU", choices=["UU", "all"],
                     help="UU: Phase S (swing-up + balance). all: goal-conditioned switching "
                          "between the four equilibria (Phase 6) along the switching library.")
+    ap.add_argument("--adaptive_goals", action="store_true",
+                    help="(--goals all) sample goals in proportion to their frontier failure")
     ap.add_argument("--traj", default=DEFAULT_TRAJ)
     ap.add_argument("--library", default=DEFAULT_LIBRARY)
     ap.add_argument("--max_force", type=float, default=100.0)
