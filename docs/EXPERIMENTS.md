@@ -1456,3 +1456,46 @@ The learned policy is less stiff (weaker against impulses and strong wind)
 but, without a feed-forward trajectory, tolerates pole-mass errors that
 break the designed controller; both are sensitive to the upper pole's
 length.
+
+Reproducibility: seed 1 (refactored trainer, same settings) reached the
+basin at 380 k and full reach at 2.92 M transitions and scores **100/100
+from hanging** (final error 0.02°) and 95/100 from the basin
+(`docs/reports/phaseS_seed1_hanging.md`).
+
+## Phase 6 (2026-09-26): learned switching between all four equilibria
+
+Same recipe as Phase S, with the Phase T switching library supplying start
+states (12 transitions; time-to-go *reach* grows from the goal back to the
+source equilibrium).
+
+1. **One shared goal-conditioned network** (`--goals all`, one-hot goal in
+   the observation, reward measured from the goal): basin milestone for all
+   four goals at 260 k transitions, reach 2.5 s at 1.6 M — then a stall.
+   Over 1 M+ further transitions and three resumes (adaptive goal weighting,
+   lr 1e-4, 64 evaluation episodes) the failing goal rotated between
+   evaluations (DD→DU / UD→DU, then DU→UU / UD→UU) while the others held —
+   interference between goals in one network. Resuming without the replay
+   buffer also cost ground (DU→UU and UD→UU fell from ≥ 96 % to 0 %), so
+   the trainer now saves and reloads it (`--save_buffer`, `--load_buffer`).
+   Every stalled frontier was feasible: TVLQR recovers 79–100 % of the same
+   perturbed starts.
+2. **Goal-gated mixture of experts** (`--goals expert:<NAME>`, same 12-D
+   observation, each warm-started from the shared run at reach 2.6 s,
+   1 thread each, per-transition sampling weights): full reach after
+   0.46 M (DD), 1.42 M (DU), 2.02 M (UD) and 3.0 M (UU) transitions. The
+   UU expert was the slowest, stalling at 2.7–3.0 s with the cart leaving
+   the soft bound on DU→UU / UD→UU; three forked copies (with the replay
+   buffer) ran in parallel and the original finished first.
+3. **Chaining.** Every transition passed on its own, but 0/5 twelve-leg
+   tours: the DD and DU experts held their configuration without
+   re-centring the cart (the 0.05·(x/3.5)² penalty is ≈ 0.016 per step at
+   2 m), so the next transition started off-centre and ran past 3.5 m. A
+   300 k-transition fine-tune per expert with a 0.3 centring penalty and
+   basin starts over ±2.5 m of cart position (stored rewards relabelled),
+   plus a ready gate in the switcher (switch once |x|, |ẋ| < 0.3, as the
+   model-based controller does), fixed it.
+
+**Result** (`docs/reports/switching_rl_d1.md`, real env, δ = 1, 10 seeds per
+transition): **12/12 transitions at 100 %**, final errors 0.03–0.78°, each
+reached 0.6–2.7 s after the request (the model-based trajectories take
+4 s), peak force 75–100 N; **5/5 tours** through all 12 transitions.

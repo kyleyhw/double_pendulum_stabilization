@@ -1,11 +1,12 @@
 # Project Development Plan
 This document outlines the planned phases and tasks for developing Double Pendulum Stabilization.
 
-**Status (2026-09-26):** the double pendulum is swung up from hanging and
-balanced at full physics by a designed controller (Phase R: trajectory
-optimisation + TVLQR + LQR; 100/100 episodes at $\delta = 1$). No RL policy
-balances yet. The chronological log is `docs/EXPERIMENTS.md`; the resume
-point is `docs/NEXT_STEPS.md`.
+**Status (2026-09-26):** at full physics ($\delta = 1$) the double pendulum is
+swung up from hanging and balanced both by a designed controller (Phase R,
+100/100) and by a learned SAC policy (Phase S, 99/100), and moved between all
+four equilibria by a model-based switching controller (Phase T, 12/12
+transitions). A learned goal-gated policy also switches between all four equilibria (Phase 6, 12/12). The chronological log is `docs/EXPERIMENTS.md`;
+the resume point is `docs/NEXT_STEPS.md`.
 
 ## Phase 1: Mathematical Foundation & Physics Engine
 1.  [completed] Derivation of Equations of Motion (EOM).
@@ -33,11 +34,10 @@ point is `docs/NEXT_STEPS.md`.
 6.  [completed] Perturbation Mechanism.
     - [completed] Allow user to apply impulsive forces.
     - [completed] Simulate continuous wind.
-7.  [in-progress] Stress Testing.
-    - [partial] LQR basin probe (2026-07-12): ~79 % capture from simultaneous ±14° pole errors, ±0.5 rad/s, ±1 m.
-    - [partial] Designed swing-up: 30/30 at 5× wind ($\sigma_w = 5$ N); `tools/eval_swingup.py --wind`.
-    - [pending] Systematic sweep of maximum recoverable angle/velocity/impulse for the Phase R controller.
-    - [pending] Output: `docs/robustness_report.md`.
+7.  [completed] Stress Testing (2026-09-26).
+    - [completed] Maximum recoverable angle / rate (basin maps), cart impulse, wind, model mismatch, friction, actuator limit and LQR gain trade-off for the Phase R controller (`tools/robustness_sweep.py`).
+    - [completed] Output: `docs/robustness_report.md` (+ `docs/images/robustness_basins.png`).
+    - [completed] Same impulse / wind / mismatch tests for the Phase S RL policy (`tools/eval_balance.py --stress`, `docs/reports/phaseS_hanging.md`).
 
 ## Phase 5: Curriculum Learning & Robust Stabilization
 **Goal**: Achieve robust swing-up and stabilization by gradually increasing physics difficulty.
@@ -60,14 +60,14 @@ point is `docs/NEXT_STEPS.md`.
 2.  [completed] Implement `set_curriculum(difficulty)` method.
 3.  [completed] Implement **Exponential Continuity Reward**.
 4.  [completed] Implement **Ratchet Curriculum** in `train.py`.
-5.  [blocked] Train to completion (Difficulty 1.0). PPO reaches $\delta = 1$ but never balances; SAC stalls at $\delta \approx 0.34$. Root cause (energy-level swing-up cannot reach the capture set on a chaotic level set) in `docs/NEXT_STEPS.md`. Superseded for the headline task by Phase R; RL continues under Phase S.
-6.  [completed] Verify robustness on full physics — for the Phase R controller (`docs/reports/swingup_d1.md`). Pending for any RL policy.
+5.  [superseded] Train to completion (Difficulty 1.0). The *physics* ratchet never produced a balancing policy (PPO reaches $\delta = 1$ but never balances; SAC stalls at $\delta \approx 0.34$; root cause in `docs/NEXT_STEPS.md`). RL at full difficulty was achieved instead by a curriculum over *initial states* (Phase S: 99/100 from hanging at $\delta = 1$).
+6.  [completed] Verify robustness on full physics — Phase R controller (`docs/robustness_report.md`) and Phase S policy (`docs/reports/phaseS_hanging.md`).
 
 ## Phase 6: Multi-Equilibrium Switching
-1.  [partial] Create `DoublePendulumGoalEnv` (Goal-Conditioned) — scaffold in `src/env/double_pendulum_goal.py`, untrained.
-2.  [pending] Implement Goal-Conditioned Reward.
-3.  [pending] Train agent to switch between Down-Down, Up-Up, Down-Up, Up-Down. Model-based alternative now cheap: `optimize_swingup(start=..., goal=...)` between any two equilibria + LQR at each (see Phase T).
-4.  [pending] Interactive Control Demo.
+1.  [completed] Create `DoublePendulumGoalEnv` (Goal-Conditioned) — `src/env/double_pendulum_goal.py` (one-hot goal; used for the goal layout / indices). Training uses the vectorised equivalent in `src/train_balance.py --goals all`.
+2.  [completed] Implement Goal-Conditioned Reward — Gaussian goal reward in `DoublePendulumGoalEnv`; the trained agent uses `train_balance.balance_reward` measured from the goal's pole angles.
+3.  [completed] Train agent to switch between Down-Down, Up-Up, Down-Up, Up-Down (2026-09-26) — a goal-gated mixture of four SAC experts (`src/train_balance.py --goals expert:<NAME>`, reverse curriculum along the switching library, then a cart-centring fine-tune): **12/12 transitions at 100 %**, 5/5 twelve-leg tours (`docs/reports/switching_rl_d1.md`). A single shared goal-conditioned network (`--goals all`) stalled at reach 2.5–2.6 s from interference between goals; model-based switching is in Phase T.
+4.  [completed] Interactive Control Demo — `python src/run_lqr.py --switching`, keys 1–4 (model-based switching controller).
 
 ## Phase 7: Velocity Control
 1.  [completed] Modify Env to use Velocity Control.
@@ -78,7 +78,7 @@ point is `docs/NEXT_STEPS.md`.
 2.  [completed] Refactor `DoublePendulumEnv` to use strategies (subclass of `CartPendulumBase`).
 3.  [completed] Implement `SinglePendulumEnv` using strategies.
 4.  [completed] Update `train.py` with `--env`, `--control`, `--reward` args.
-5.  [pending] Verify Single Pendulum Training (smoke run on the optimised pipeline).
+5.  [completed] Verify Single Pendulum Training (2026-09-26): 60 PPO updates on the optimised pipeline (`--env single --n_envs 4`, 123k env steps, 51 s) run end to end; curriculum ratchets 0 → 0.01.
 
 ## Phase K: Pipeline Runtime Optimisation
 **Goal**: Reduce wall-time of the training+test pipeline so further algorithmic experiments (SAC, LQR-bootstrap) become tractable. Hard constraint: physics bit-identical to master baseline.
@@ -103,7 +103,7 @@ point is `docs/NEXT_STEPS.md`.
 1.  [completed] Phase O: honest balance metrics (survival, terminal-1 s strict, max sustained strict); whole-episode strict retired as a headline.
 2.  [completed] Phase P: SAC + `EnergyShapingReward` — survives with poles tumbling near horizontal (reward's true optimum).
 3.  [completed] Phase Q: SAC with LQR-filled replay buffer — same tumbling optimum.
-4.  [pending] Commit the Phase O–Q code and reports (`src/control/hybrid_controller.py`, `src/control/equilibria.py`, `src/agent/lqr_bootstrap.py`, `tools/eval_lqr.py`, `tools/eval_hybrid.py`, `tools/rollout_trace.py`, `docs/reports/v2_*`) — they exist only in a local working tree; `docs/EXPERIMENTS.md` has no O–Q entries.
+4.  [blocked — needs Kyle's machine] Commit the Phase O–Q code and reports (`src/control/hybrid_controller.py`, `src/control/equilibria.py`, `src/agent/lqr_bootstrap.py`, `tools/eval_lqr.py`, `tools/eval_hybrid.py`, `tools/rollout_trace.py`, `docs/reports/v2_*`). They exist only in that local working tree and were never pushed, so they cannot be committed from anywhere else. Their function is superseded (Phase R/S/T), so this is archival only.
 
 ## Phase R: Designed Swing-Up (2026-09-24) — headline task solved
 **Goal**: Hanging → upright → balance at $\delta = 1$ without RL (`docs/NEXT_STEPS.md` Option A).
@@ -114,18 +114,20 @@ point is `docs/NEXT_STEPS.md`.
 5.  [completed] Fix `src/run_lqr.py` (crashed on `env.force_mag`; drove the env through `VelocityControl`) — now the interactive swing-up demo.
 6.  [completed] Tests (`tests/test_swingup.py`).
 
-## Phase S: RL That Balances (next)
+## Phase S: RL That Balances (2026-09-26) — first learned policy that balances
 **Goal**: First learned policy that genuinely balances (`docs/NEXT_STEPS.md` Option B).
-1.  [pending] `--init_mode basin --init_radius r` reset option; SAC with `ForceControl`.
-2.  [pending] Milestone: ≥ 95 % terminal-1 s strict at $r = 0.25$ rad, $\delta = 1$.
-3.  [pending] Reverse curriculum toward hanging, seeding resets from states along the Phase R trajectory (latest first).
-4.  [pending] Optional capture-dwell reward rider (Option C).
+1.  [completed] Basin reset distribution (radius $r$) + SAC with `ForceControl` ($F_{\max} = 100$ N, 50 Hz) — `src/train_balance.py`.
+2.  [completed] Milestone: ≥ 95 % terminal-1 s strict at $r = 0.25$ rad, $\delta = 1$ — **99/100** after 340k transitions (`docs/reports/phaseS_basin_r025.md`).
+3.  [completed] Reverse curriculum toward hanging along the Phase R trajectory — mastered after 2.36M transitions; **99/100 from hanging** on the real env (`docs/reports/phaseS_hanging.md`, `logs/phaseS_seed0_hanging.pth`).
+4.  [not needed] Capture-dwell reward rider (Option C) — the dense Gaussian term already pays per step inside the capture region, and items 2–3 cleared without it.
+5.  [completed] Reproduced with a second seed: 100/100 from hanging (`docs/reports/phaseS_seed1_hanging.md`).
 
-## Phase T: Model-Based Equilibrium Switching
-1.  [pending] Trajectories between all pairs of the four equilibria via `optimize_swingup(start, goal)`.
-2.  [pending] LQR at each unstable equilibrium (down-up, up-down, up-up).
-3.  [pending] Interactive switching demo (extends `src/run_lqr.py`).
+## Phase T: Model-Based Equilibrium Switching (2026-09-26)
+1.  [completed] Trajectories between all 12 ordered pairs of the four equilibria (`src/control/switching.py`, `src/control/data/switching_d1.npz`).
+2.  [completed] LQR hold at each equilibrium; TVLQR tracking into each.
+3.  [completed] Interactive switching demo (`python src/run_lqr.py --switching`).
+4.  [completed] Evaluation: 12/12 transitions at 100 % (10 seeds), 5/5 twelve-leg tours (`docs/reports/switching_d1.md`).
 
 ## Housekeeping
-1.  [pending] `tests/test_pipeline_equivalence.py` SHA-256 trajectory baselines fail on this machine's numpy/LAPACK build (3 tests, pre-existing, env code untouched). Make them platform-tolerant or document the pinned build.
-2.  [pending] Phase 8.5 single-pendulum smoke run.
+1.  [completed] `tests/test_pipeline_equivalence.py`: portable reference-trajectory gate (atol 1e-10) + per-platform bit gate keyed by a libm/LAPACK fingerprint. Register a new machine with `python tests/test_pipeline_equivalence.py --register`.
+2.  [completed] Phase 8.5 single-pendulum smoke run (see Phase 8).

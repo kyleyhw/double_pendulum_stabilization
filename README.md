@@ -10,8 +10,10 @@ rollouts.
 difficulty by the model-based controller in `src/control/swingup.py`
 (trajectory optimisation + time-varying LQR + LQR balance): 100/100 episodes,
 steady-state error < 0.05° — see [§3.4](#34-model-based-swing-up-and-balance)
-and [`docs/reports/swingup_d1.md`](docs/reports/swingup_d1.md). No RL policy
-balances yet; see [`docs/NEXT_STEPS.md`](docs/NEXT_STEPS.md).
+and [`docs/reports/swingup_d1.md`](docs/reports/swingup_d1.md). A learned SAC
+policy trained by reverse curriculum (§3.6) does the same in 99/100 episodes,
+and both a model-based and a learned controller switch between all four
+equilibria (12/12 transitions). See [`docs/NEXT_STEPS.md`](docs/NEXT_STEPS.md).
 
 ![Visualizer Screenshot](docs/images/visualizer_screenshot.png)
 
@@ -257,9 +259,12 @@ python tools/robustness_sweep.py           # ~6 min → docs/robustness_report.m
 python src/train_balance.py --stop_when_mastered --run_name phaseS
 python tools/eval_balance.py --model logs/phaseS_full.pth
 
-# Phase 6: one goal-conditioned policy for all four equilibria.
-python src/train_balance.py --goals all --stop_when_mastered --run_name phase6
-python tools/eval_switching.py --policy logs/phase6_full.pth
+# Phase 6: learned switching between all four equilibria, one expert per goal
+# (warm-started here from a shared --goals all run), then a cart-centring fine-tune.
+for G in DD UU DU UD; do
+  python src/train_balance.py --goals expert:$G --save_buffer --stop_when_mastered --run_name expert_$G
+done
+python tools/eval_switching.py --policy logs/phase6_center_DD_final.pth,logs/phase6_center_UU_final.pth,logs/phase6_center_DU_final.pth,logs/phase6_center_UD_final.pth
 ```
 
 ## 4. Documentation index
@@ -267,7 +272,8 @@ python tools/eval_switching.py --policy logs/phase6_full.pth
 * [Next steps — self-contained handoff](docs/NEXT_STEPS.md) (resume point; start here)
 * [Designed swing-up evaluation at δ = 1](docs/reports/swingup_d1.md)
 * [Robustness report](docs/robustness_report.md)
-* [Equilibrium switching evaluation](docs/reports/switching_d1.md)
+* [Equilibrium switching evaluation](docs/reports/switching_d1.md) and [learned switching](docs/reports/switching_rl_d1.md)
+* [Phase S RL policy from hanging](docs/reports/phaseS_hanging.md)
 * [Experiment log — campaign chronicle](docs/EXPERIMENTS.md)
 * [Physics derivation](docs/physics_derivation.md)
 * [Controllability analysis](docs/controllability_analysis.md)

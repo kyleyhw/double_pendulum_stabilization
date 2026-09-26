@@ -1,11 +1,56 @@
 # Next Steps — Self-Contained Handoff
 
-**Updated: 2026-07-12.** This supersedes the 2026-05-01 version of this file
+**Updated: 2026-09-26** (see the first section); the 2026-07-12 text below
+it is kept as the diagnostic record. That version superseded the 2026-05-01 version of this file
 (which recommended the SAC rewrite — since executed, Phases K–Q). It is the
 resume point for the cart-double-pendulum project and is written to be
 readable in a fresh session with no prior context. The chronological campaign
-log is `docs/EXPERIMENTS.md` (currently ends mid-Phase-P; see
+log is `docs/EXPERIMENTS.md` (Phases O–Q are missing from it; see
 [Repository state](#repository-and-environment-state)).
+
+## Update 2026-09-26 — the project plan is executed
+
+Every item in `PROJECT_PLAN.md` is now done, except one archival commit
+that can only be made from the machine holding it (Phase O–Q files). Results,
+all at full difficulty ($\delta = 1$) on the real `DoublePendulumCartEnv`:
+
+| What | Where | Result |
+|---|---|---|
+| Designed swing-up + balance (Phase R) | `src/control/swingup.py` | 100/100 from hanging |
+| Robustness of that controller (Phase 4.7) | `docs/robustness_report.md` | basins, impulse 8 N·s, wind 40 N, actuator ≥ 25 N; fragile to ±10–20 % pole mass/length |
+| **RL that balances** (Phase S, Option B) | `src/train_balance.py`, `logs/phaseS_seed0_hanging.pth` | **99/100 from hanging**, 100/100 from the ±0.25 rad basin; seed 1: 100/100 from hanging |
+| Model-based switching, all 4 equilibria (Phase T) | `src/control/switching.py` | 12/12 transitions at 100 %, 5/5 twelve-leg tours |
+| Learned switching, all 4 equilibria (Phase 6) | `src/train_balance.py --goals expert:<NAME>` | 12/12 transitions at 100 %, 5/5 tours (goal-gated mixture of 4 experts) |
+| Interactive demo (Phase 6.4) | `python src/run_lqr.py --switching` | keys 1–4 |
+| Platform-aware physics gate, single-pendulum smoke run | `tests/test_pipeline_equivalence.py` | done |
+
+What made RL work where Phases C–Q failed: a curriculum over **initial
+states** (upright basin, then backwards along the designed swing-up)
+instead of over physics; `ForceControl` with a 100 N range instead of
+`VelocityControl`; 50 Hz action repeat; a bounded dense reward. Details in
+`docs/EXPERIMENTS.md` (Phase S).
+
+### Open problems, ranked
+
+1. **Model mismatch.** Both controllers break for ±10–20 % errors in the
+   pole parameters (the upper pole's length worst). Remedies: identify
+   parameters before planning; re-plan online (MPC over the existing
+   multiple-shooting code); optimise trajectories over parameter samples;
+   domain-randomise Phase S training.
+2. **RL precision and stiffness.** The Phase S policy rests at 2–4° error
+   (LQR: 0.04°) and rejects half the impulse LQR does. Cheapest fix: hand
+   over to the existing LQR inside its basin (RL swing-up + LQR catch), or
+   fine-tune with a tighter reward width.
+3. **RL without the designed trajectory.** Phase S uses Phase R's
+   trajectory to seed start states. A fully model-free version would grow
+   the start set from the basin by random rollouts (Florensa's
+   "states-from-the-frontier" sampling).
+4. **One network for all goals.** Phase 6 needed one expert per goal: a
+   shared goal-conditioned network stalled for 1M+ transitions with the
+   failing goal rotating (interference). Distilling the four experts into
+   one network is the natural next step if a single policy matters.
+5. **Archival:** commit the Phase O–Q files from the local working tree
+   (see Repository state below).
 
 ## Update 2026-09-24 — Option A implemented; the system is stabilized
 
