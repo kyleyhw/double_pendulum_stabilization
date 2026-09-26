@@ -1470,7 +1470,7 @@ source equilibrium).
 
 1. **One shared goal-conditioned network** (`--goals all`, one-hot goal in
    the observation, reward measured from the goal): basin milestone for all
-   four goals at 260 k transitions, reach 2.5 s at 1.6 M — then a stall.
+   four goals at 280 k transitions, reach 2.5 s at 1.6 M — then a stall.
    Over 1 M+ further transitions and three resumes (adaptive goal weighting,
    lr 1e-4, 64 evaluation episodes) the failing goal rotated between
    evaluations (DD→DU / UD→DU, then DU→UU / UD→UU) while the others held —
